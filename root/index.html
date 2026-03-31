@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Angad Jaiswal | 3D Cyber Portfolio</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/@studio-freight/lenis@1.0.33/dist/lenis.min.js"></script>
+    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+    <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    
+    <style>
+        html.lenis { height: auto; }
+        .lenis.lenis-smooth { scroll-behavior: auto; }
+        
+        body { 
+            background: radial-gradient(circle at center, #0a001a 0%, #020202 100%); 
+            cursor: none; 
+            margin: 0; 
+            overflow-x: hidden; 
+        } 
+
+        #three-container {
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            top: 0;
+            left: 0;
+            opacity: 0.8;
+        }
+
+        .cursor-dot {
+            width: 6px;
+            height: 6px;
+            background-color: #a855f7;
+            position: fixed;
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%);
+            transition: background-color 0.3s;
+        }
+
+        .cursor-outline {
+            width: 30px;
+            height: 30px;
+            border: 1px solid rgba(168, 85, 247, 0.5);
+            position: fixed;
+            pointer-events: none;
+            z-index: 9998;
+            transform: translate(-50%, -50%) rotate(45deg);
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), width 0.3s, height 0.3s;
+        }
+
+        .cursor-hover-active {
+            width: 55px;
+            height: 55px;
+            border-radius: 0px; 
+            transform: translate(-50%, -50%) rotate(0deg); 
+            background-color: rgba(168, 85, 247, 0.1);
+            border: 2px solid #a855f7;
+            box-shadow: 0 0 25px rgba(168, 85, 247, 0.8);
+        }
+
+        .text-glow {
+            text-shadow: 0 0 25px rgba(168, 85, 247, 0.6);
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.01);
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(168, 85, 247, 0.1);
+            transition: all 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+
+        .glass-card:hover {
+            background: rgba(168, 85, 247, 0.05);
+            border-color: rgba(168, 85, 247, 0.4);
+            transform: translateY(-10px);
+        }
+
+        @media (max-width: 768px) {
+            body { cursor: auto; }
+            .cursor-dot, .cursor-outline { display: none; }
+        }
+    </style>
+</head>
+<body class="text-gray-100 font-sans selection:bg-purple-600">
+
+    <div id="cursor-dot" class="cursor-dot"></div>
+    <div id="cursor-outline" class="cursor-outline"></div>
+    <div id="three-container"></div>
+
+    <nav class="fixed w-full z-50 bg-black/10 backdrop-blur-md border-b border-white/5 mix-blend-difference">
+        <div class="max-w-7xl mx-auto px-10 py-6 flex justify-between items-center">
+            <div class="text-xl font-black tracking-widest uppercase italic">ANGAD<span class="text-purple-500">JAISWAL</span></div>
+            <div class="space-x-8 hidden md:flex text-[10px] uppercase tracking-[0.4em] font-bold text-gray-400">
+                <a href="#home" class="hover:text-purple-400 transition">Home</a>
+                <a href="https://angadxl01.github.io/About-website-/" target="_blank" class="hover:text-purple-400 transition">About</a>
+                <a href="#experience" class="hover:text-purple-400 transition">Works</a>
+                <a href="#contact" class="hover:text-purple-400 transition">Contact</a>
+            </div>
+        </div>
+    </nav>
+
+    <section id="home" class="min-h-screen flex flex-col justify-center items-center text-center px-6">
+        <div data-aos="zoom-out" data-aos-duration="1500">
+            <p class="text-purple-500 font-mono mb-6 tracking-[0.6em] text-xs font-bold uppercase">System Architect // @ANGADXL</p>
+            <h1 class="text-7xl md:text-[11vw] font-black leading-none tracking-tighter uppercase text-glow italic">ANGAD</h1>
+            <h1 class="text-7xl md:text-[11vw] font-black leading-none tracking-tighter uppercase text-glow italic">JAISWAL</h1>
+        </div>
+        
+        <div data-aos="fade-up" data-aos-delay="600" data-aos-duration="1200" class="mt-12">
+            <p class="text-gray-400 max-w-lg text-lg leading-relaxed mb-10 font-light italic">
+               "The system isn’t broken… it’s just waiting for me."
+            </p>
+            <div class="flex space-x-6 justify-center">
+                <a href="https://t.me/tgknowssoul" target="_blank" class="bg-purple-600 text-white px-12 py-4 font-bold hover:bg-white hover:text-black transition duration-500 rounded-sm uppercase text-[10px] tracking-widest shadow-lg shadow-purple-500/20">Connect</a>
+
+                <a href="port.html" target="_blank" rel="noopener noreferrer" class="border border-purple-500/30 px-12 py-4 font-bold hover:bg-purple-500 hover:text-white transition duration-500 rounded-sm uppercase text-[10px] tracking-widest">Sites</a>
+            </div>
+        </div>
+    </section>
+
+    <section id="experience" class="py-48 px-10">
+        <div class="max-w-7xl mx-auto">
+            <h2 class="text-center text-purple-900 font-black tracking-[2em] mb-24 uppercase text-[10px]" data-aos="fade-up">Selected Projects</h2>
+            <div class="grid md:grid-cols-2 gap-12">
+                <div class="glass-card group p-16 relative overflow-hidden" data-aos="fade-right">
+                    <p class="text-[10px] text-purple-400 mb-6 font-black tracking-widest uppercase italic">Service</p>
+                    <h3 class="text-4xl font-bold mb-6 tracking-tighter uppercase italic">SITES</h3>
+                    <p class="text-gray-500 leading-relaxed font-light text-lg">WEBSITE CREATED BY ME <a href=".com">CLICK</a>.</p>
+                </div>
+                <div class="glass-card group p-16 relative overflow-hidden" data-aos="fade-left" data-aos-delay="200">
+                    <p class="text-[10px] text-purple-400 mb-6 font-black tracking-widest uppercase italic">Automation</p>
+                    <h3 class="text-4xl font-bold mb-6 tracking-tighter uppercase italic">Games I Play</h3>
+                    <p class="text-gray-500 leading-relaxed font-light text-lg">Free Fire, Minecraft, BGMI, Ludo, Caron, Uno, Cricket, Hockey.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer with Telegram, Instagram, Gmail, and Phone -->
+    <footer id="contact" class="py-40 px-10 text-center border-t border-purple-900/20">
+        <div data-aos="zoom-in">
+            <a href="https://t.me/tgknowssoul" class="text-5xl md:text-8xl font-black hover:text-purple-500 transition-all uppercase tracking-tighter italic">Get In Touch</a>
+            <div class="flex justify-center space-x-16 mt-20">
+                <!-- Telegram -->
+                <a href="https://t.me/tgknowssoul" class="text-gray-500 hover:text-purple-500 transition-all transform hover:scale-150 text-4xl" aria-label="Telegram profile">
+                    <i class="fab fa-telegram"></i>
+                </a>
+
+                <!-- Instagram -->
+                <a href="https://www.instagram.com/_its__your__rohan" class="text-gray-500 hover:text-purple-500 transition-all transform hover:scale-150 text-4xl" aria-label="Instagram profile">
+                    <i class="fab fa-instagram"></i>
+                </a>
+
+                <!-- Gmail -->
+                <a href="mailto:example@gmail.com" class="text-gray-500 hover:text-purple-500 transition-all transform hover:scale-150 text-4xl" aria-label="Send Email">
+                    <i class="fas fa-envelope"></i>
+                </a>
+
+                <!-- Phone -->
+                <a href="tel:+1234567890" class="text-gray-500 hover:text-purple-500 transition-all transform hover:scale-150 text-4xl" aria-label="Call Phone">
+                    <i class="fas fa-phone"></i>
+                </a>
+            </div>
+            <p class="mt-24 text-[9px] text-gray-800 tracking-[1em] uppercase font-bold">ANGAD &copy; 2026 //</p>
+        </div>
+    </footer>
+
+    <script>
+        const lenis = new Lenis();
+        function raf(time) { lenis.raf(time); requestAnimationFrame(raf); }
+        requestAnimationFrame(raf);
+
+        AOS.init({ duration: 1000, easing: 'cubic-bezier(0.23, 1, 0.32, 1)', once: true });
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('three-container').appendChild(renderer.domElement);
+
+        const starGeometry = new THREE.BufferGeometry();
+        const starMaterial = new THREE.PointsMaterial({ color: 0x8b5cf6, size: 0.045, transparent: true, blending: THREE.AdditiveBlending });
+        const starVertices = [];
+        for (let i = 0; i < 4000; i++) {
+            starVertices.push((Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50);
+        }
+        starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+        const stars = new THREE.Points(starGeometry, starMaterial);
+        scene.add(stars);
+        camera.position.z = 15;
+
+        let mouseX = 0, mouseY = 0;
+        window.addEventListener('mousemove', (e) => {
+            mouseX = (e.clientX - window.innerWidth / 2) / 80;
+            mouseY = (e.clientY - window.innerHeight / 2) / 80;
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            stars.rotation.y += 0.003;
+            stars.rotation.x += 0.001;
+            stars.rotation.x += (mouseY * 0.08 - stars.rotation.x) * 0.1;
+            stars.rotation.z += (mouseX * 0.08 - stars.rotation.z) * 0.1;
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        const dot = document.getElementById("cursor-dot");
+        const outline = document.getElementById("cursor-outline");
+
+        window.addEventListener("mousemove", (e) => {
+            dot.style.left = `${e.clientX}px`;
+            dot.style.top = `${e.clientY}px`;
+            outline.animate({ left: `${e.clientX}px`, top: `${e.clientY}px` }, { duration: 500, fill: "forwards" });
+        });
+
+        document.querySelectorAll("a, .glass-card, button").forEach(el => {
+            el.addEventListener("mouseenter", () => {
+                outline.classList.add("cursor-hover-active");
+                dot.style.opacity = "0";
+            });
+            el.addEventListener("mouseleave", () => {
+                outline.classList.remove("cursor-hover-active");
+                dot.style.opacity = "1";
+            });
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
