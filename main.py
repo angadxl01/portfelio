@@ -6,12 +6,14 @@ except RuntimeError:
 
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import os
+import json
 
 # ==================== CONFIGURATION ====================
-API_ID = 36645562  # Apna numeric api_id daalein
+API_ID = 36645562
 API_HASH = "ccad405579d80b82492abbf4a7777907"
 BOT_TOKEN = "8822648253:AAGZroIwI4F7udtFlhABotrsqjAXm_qcSq4"
-ADMIN_ID = 8895089247  # ⚠️ Yahan apna Telegram User ID daalein
+ADMIN_ID = 8895089247  # ⚠️ Sirf is ID ko admin access milega
 # =======================================================
 
 app = Client(
@@ -22,11 +24,28 @@ app = Client(
 )
 
 user_states = {}
-temp_join_data = {}
+temp_login_data = {}
 bot_users = set()
-saved_accounts = []
 saved_channels = []
 active_join_configs = {}
+
+# Saved accounts ko server par safe rakhne ke liye file storage
+ACCOUNTS_FILE = "saved_accounts.json"
+
+def load_accounts():
+    if os.path.exists(ACCOUNTS_FILE):
+        try:
+            with open(ACCOUNTS_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+def save_accounts_data(accounts):
+    with open(ACCOUNTS_FILE, "w") as f:
+        json.dump(accounts, f)
+
+saved_accounts = load_accounts()
 
 def get_main_menu(user_id):
     buttons = [
@@ -41,7 +60,7 @@ def get_main_menu(user_id):
         ],
         [
             InlineKeyboardButton("🎁 Redeem Code", callback_data="redeem_code"),
-            InlineKeyboardButton("➕ Add Account", callback_data="add_account")
+            InlineKeyboardButton("➕ Add Account (Login)", callback_data="add_account")
         ],
         [
             InlineKeyboardButton("❌ Remove Account", callback_data="remove_account"),
@@ -80,8 +99,12 @@ async def start_handler(client, message):
         reply_markup=get_main_menu(user_id)
     )
 
-@app.on_message(filters.command("admin") & filters.user(ADMIN_ID))
+@app.on_message(filters.command("admin"))
 async def admin_command_handler(client, message):
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        await message.reply_text("❌ You are not authorized to use the admin panel!")
+        return
     await message.reply_text(
         "**👑 WELCOME TO ADMIN PANEL**",
         reply_markup=get_admin_menu()
@@ -115,8 +138,8 @@ async def callback_handler(client, callback_query):
         await callback_query.message.reply_text("📢 Send broadcast message:")
     elif data == "admin_view_accounts":
         if user_id != ADMIN_ID: return
-        accs = "\n".join([f"• `{a['user_id']}`" for a in saved_accounts]) or "None"
-        await callback_query.message.reply_text(f"📂 **Accounts:**\n{accs}")
+        accs = "\n".join([f"• User ID: `{a['user_id']}`" for a in saved_accounts]) or "None"
+        await callback_query.message.reply_text(f"📂 **Saved Accounts:**\n{accs}")
     elif data == "admin_view_channels":
         if user_id != ADMIN_ID: return
         chns = "\n".join([f"• `{c['channel']}`" for c in saved_channels]) or "None"
@@ -130,16 +153,19 @@ async def callback_handler(client, callback_query):
     elif data == "my_account":
         ac = len([a for a in saved_accounts if a['user_id'] == user_id])
         cc = len([c for c in saved_channels if c['user_id'] == user_id])
-        await callback_query.message.reply_text(f"👤 **Account Info:**\nAccounts: {ac}\nChannels: {cc}")
+        await callback_query.message.reply_text(f"👤 **Your Account Info:**\nLogged-in Accounts: {ac}\nChannels: {cc}")
     elif data == "vip_premium":
         await callback_query.message.reply_text("⭐ VIP Premium feature.")
     elif data == "redeem_code":
         await callback_query.message.reply_text("🎁 Enter redeem code:")
     elif data == "add_account":
-        user_states[user_id] = "waiting_for_session"
-        await callback_query.message.reply_text("➕ Send your Pyrogram **Session String**:")
+        user_states[user_id] = "waiting_for_phone"
+        temp_login_data[user_id] = {}
+        await callback_query.message.reply_text(
+            "📱 **Phone Number Login**\n\nPlease send your phone number with country code (e.g., `+919876543210`):"
+        )
     elif data == "remove_account":
-        await callback_query.message.reply_text("❌ Send account to remove.")
+        await callback_query.message.reply_text("❌ Send account details to remove.")
     elif data == "add_channel":
         user_states[user_id] = "waiting_for_channel"
         await callback_query.message.reply_text("➕ Send Channel Username/Link:")
@@ -165,13 +191,87 @@ async def handle_text_messages(client, message):
             try: await client.send_message(u_id, f"📢 **Broadcast:**\n{text}")
             except: pass
         await message.reply_text("✅ Broadcast completed!")
-    elif state == "waiting_for_session":
-        if len(text) < 50:
-            await message.reply_text("⚠️ Invalid Session String!")
-            return
-        saved_accounts.append({"user_id": user_id, "session": text})
-        user_states.pop(user_id, None)
-        await message.reply_text("✅ Account Saved!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]]))
+        
+    elif state == "waiting_for_phone":
+        phone_number = text
+        temp_login_data[user_id]["phone"] = phone_number
+        
+        status_msg = await message.reply_text("⏳ Connecting to Telegram and sending OTP...")
+        try:
+            temp_client = Client(f"temp_{user_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+            await temp_client.connect()
+            sent_code = await temp_client.send_code(phone_number)
+            
+            temp_login_data[user_id]["client"] = temp_client
+            temp_login_data[user_id]["phone_code_hash"] = sent_code.phone_code_hash
+            
+            user_states[user_id] = "waiting_for_otp"
+            await status_msg.edit_text("✅ OTP sent to your Telegram app!\n\nPlease send the OTP code with spaces (e.g., `1 2 3 4 5`):")
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Error: `{str(e)}`\n\nTry again by clicking 'Add Account' from menu.")
+            user_states.pop(user_id, None)
+            temp_login_data.pop(user_id, None)
+            
+    elif state == "waiting_for_otp":
+        otp_code = text.replace(" ", "")
+        login_data = temp_login_data.get(user_id, {})
+        temp_client = login_data.get("client")
+        phone = login_data.get("phone")
+        phone_code_hash = login_data.get("phone_code_hash")
+        
+        status_msg = await message.reply_text("⏳ Verifying OTP...")
+        try:
+            await temp_client.sign_in(phone, phone_code_hash, otp_code)
+            session_string = await temp_client.export_session_string()
+            await temp_client.disconnect()
+            
+            saved_accounts.append({"user_id": user_id, "session": session_string})
+            save_accounts_data(saved_accounts)
+            
+            user_states.pop(user_id, None)
+            temp_login_data.pop(user_id, None)
+            await status_msg.edit_text(
+                "✅ **Account Login Successful!**\nYour session has been securely saved.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
+            )
+        except Exception as e:
+            if "SESSION_PASSWORD_NEEDED" in str(e) or "Password" in str(e):
+                user_states[user_id] = "waiting_for_2fa"
+                await status_msg.edit_text("🔐 Two-Step Verification (2FA) is enabled.\n\nPlease send your account password:")
+            else:
+                await status_msg.edit_text(f"❌ Login Failed: `{str(e)}`")
+                try: await temp_client.disconnect()
+                except: pass
+                user_states.pop(user_id, None)
+                temp_login_data.pop(user_id, None)
+                
+    elif state == "waiting_for_2fa":
+        password = text
+        login_data = temp_login_data.get(user_id, {})
+        temp_client = login_data.get("client")
+        
+        status_msg = await message.reply_text("⏳ Verifying Password...")
+        try:
+            await temp_client.check_password(password)
+            session_string = await temp_client.export_session_string()
+            await temp_client.disconnect()
+            
+            saved_accounts.append({"user_id": user_id, "session": session_string})
+            save_accounts_data(saved_accounts)
+            
+            user_states.pop(user_id, None)
+            temp_login_data.pop(user_id, None)
+            await status_msg.edit_text(
+                "✅ **Account Login Successful with 2FA!**",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
+            )
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Invalid Password: `{str(e)}`")
+            try: await temp_client.disconnect()
+            except: pass
+            user_states.pop(user_id, None)
+            temp_login_data.pop(user_id, None)
+
     elif state == "waiting_for_channel":
         saved_channels.append({"user_id": user_id, "channel": text})
         user_states.pop(user_id, None)
@@ -197,5 +297,5 @@ async def auto_join_request_handler(client, join_request):
         except Exception as e: print(e)
 
 if __name__ == "__main__":
-    print("Bot is starting cleanly...")
+    print("Bot is starting with interactive login & secure admin...")
     app.run()
