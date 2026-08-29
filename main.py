@@ -1,10 +1,23 @@
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from flask import Flask
+import threading
 
-# Yahan apni asli details daalo jo BotFather aur my.telegram.org se mili hain
-API_ID = 36645562  # Apna asli api_id yahan likho (number me)
+# --- Flask Web Server (Render ke liye zaroori hai) ---
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "Bot is alive and running!"
+
+def run_web():
+    web_app.run(host="0.0.0.0", port=8080)
+
+# --- Telegram Bot Configuration ---
+# Apni asli details yahan daalein
+API_ID = 36645562  # Apna api_id number mein
 API_HASH = "ccad405579d80b82492abbf4a7777907"
-BOT_TOKEN = "8808808496:AAFiop1fCYgFJtlyrIfAP7unoi9SztaHn_w"
+BOT_TOKEN = "8822648253:AAGZroIwI4F7udtFlhABotrsqjAXm_qcSq4"
 
 app = Client(
     "dms_forward_bot",
@@ -41,5 +54,9 @@ async def start_handler(client, message):
     await message.reply_text(text, reply_markup=get_main_menu())
 
 if __name__ == "__main__":
-    print("Bot is starting up...")
+    # Web server ko alag thread mein chalayein
+    t = threading.Thread(target=run_web)
+    t.start()
+    
+    print("Bot and Web Server are running...")
     app.run()
