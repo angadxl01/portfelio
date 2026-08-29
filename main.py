@@ -5,7 +5,7 @@ app = Client(
     "dms_forward_bot",
     api_id=36645562,
     api_hash="ccad405579d80b82492abbf4a7777907",
-    bot_token="8794925442:AAFIHaUAJM8ZXt2guEN7Lq2kKyTTKzECWqw"
+    bot_token="8906190418:AAEsPFEkD8OHqsMgwKFUKNR8IJcZmJI_3mc"
 )
 
 # Aapke select kiye hue buttons ka Menu layout
