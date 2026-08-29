@@ -175,10 +175,7 @@ async def callback_handler(client, callback_query):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
             )
             return
-
-        status_msg = await callback_query.message.reply_text("⏳ Fetching your private chats/DMs from your Telegram account...")
-        
-        session_str = user_accs[0]["session"]
+session_str = user_accs[0]["session"]
         try:
             sender_client = Client(f"fetch_{user_id}", api_id=API_ID, api_hash=API_HASH, session_string=session_str, in_memory=True)
             await sender_client.start()
@@ -189,9 +186,7 @@ async def callback_handler(client, callback_query):
                     if dialog.chat.id != sender_client.me.id and not dialog.chat.is_bot:
                         targets.append(dialog.chat.id)
             
-            await sender_client.stop()
-            
-            if not targets:
+            await sender_client.stop():
                 await status_msg.edit_text(
                     "⚠️ Aapke account mein koi private chats nahi mili!",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
