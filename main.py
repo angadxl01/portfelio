@@ -4,17 +4,30 @@ try:
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from flask import Flask
 import os
+import threading
 import json
 
 # ==================== CONFIGURATION ====================
 API_ID = 36645562
 API_HASH = "ccad405579d80b82492abbf4a7777907"
 BOT_TOKEN = "8822648253:AAGZroIwI4F7udtFlhABotrsqjAXm_qcSq4"
-ADMIN_ID = 8895089247  # ⚠️ Sirf is ID ko admin access milega
+ADMIN_ID = 8895089247
 # =======================================================
+
+# Flask server to satisfy Render's port binding requirement
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "Bot is alive and running!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    web_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 app = Client(
     "dms_forward_bot",
@@ -29,7 +42,6 @@ bot_users = set()
 saved_channels = []
 active_join_configs = {}
 
-# Saved accounts ko server par safe rakhne ke liye file storage
 ACCOUNTS_FILE = "saved_accounts.json"
 
 def load_accounts():
@@ -296,6 +308,15 @@ async def auto_join_request_handler(client, join_request):
         try: await client.send_message(user.id, active_join_configs[key])
         except Exception as e: print(e)
 
+async def main():
+    # Start Flask web server in background thread for Render port binding
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    # Start Telegram Bot
+    await app.start()
+    print("Bot is running live on Render with web server and interactive login!")
+    await idle()
+    await app.stop()
+
 if __name__ == "__main__":
-    print("Bot is starting with interactive login & secure admin...")
-    app.run()
+    asyncio.run(main())
