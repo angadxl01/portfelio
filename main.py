@@ -1,14 +1,18 @@
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+# Yahan apni asli details daalo jo BotFather aur my.telegram.org se mili hain
+API_ID = 36645562  # Apna asli api_id yahan likho (number me)
+API_HASH = "ccad405579d80b82492abbf4a7777907"
+BOT_TOKEN = "8808808496:AAFiop1fCYgFJtlyrIfAP7unoi9SztaHn_w"
+
 app = Client(
     "dms_forward_bot",
-    api_id=36645562,
-    api_hash="ccad405579d80b82492abbf4a7777907",
-    bot_token="8906190418:AAEsPFEkD8OHqsMgwKFUKNR8IJcZmJI_3mc"
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
 )
 
-# Aapke select kiye hue buttons ka Menu layout
 def get_main_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🚀 Start Mass DM Campaign", callback_data="start_campaign")],
@@ -37,5 +41,5 @@ async def start_handler(client, message):
     await message.reply_text(text, reply_markup=get_main_menu())
 
 if __name__ == "__main__":
-    print("Bot is running...")
+    print("Bot is starting up...")
     app.run()
