@@ -1,11 +1,10 @@
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Bot Initialization (Apne credentials dalein)
 app = Client(
     "dms_forward_bot",
-    api_id="36645562",
-    api_hash=ccad405579d80b82492abbf4a7777907",
+    api_id=36645562,
+    api_hash="ccad405579d80b82492abbf4a7777907",
     bot_token="8794925442:AAFIHaUAJM8ZXt2guEN7Lq2kKyTTKzECWqw"
 )
 
