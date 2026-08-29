@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: dms-forward-bot
+    env: python
+    buildCommand: pip3 install pyrogram tgcrypto
+    startCommand: python3 bot.py
