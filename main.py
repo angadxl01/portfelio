@@ -25,10 +25,10 @@ from pyrogram.handlers import MessageHandler, CallbackQueryHandler, ChatJoinRequ
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # ================= DETAILS =================
-API_ID = 
-API_HASH = ""
+API_ID = 36645562
+API_HASH = "ccad405579d80b82492abbf4a7777907"
 # 🔥 Prince DMS Bot Token
-BOT_TOKEN = ""  
+BOT_TOKEN = "8822648253:AAGZroIwI4F7udtFlhABotrsqjAXm_qcSq4"  
 # 🔥 Updated MongoDB
 MONGO_URL = "mongodb+srv://aritraff0990_db_user:FpQjh08nTcyXMWmm@princedmsbot.lz4h7ql.mongodb.net/?appName=Princedmsbot"
 
