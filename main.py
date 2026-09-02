@@ -32,8 +32,8 @@ BOT_TOKEN = "8848003780:AAE3_Aekr_BY6VJARAzpSjLwnPHttYm3-uA"
 # 🔥 Updated MongoDB
 MONGO_URL = "mongodb+srv://aritraff0990_db_user:FpQjh08nTcyXMWmm@princedmsbot.lz4h7ql.mongodb.net/?appName=Princedmsbot"
 
-ADMINS = [5519549761] 
-bot = Client("SidDMS_Bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
+ADMINS = [8895089247] 
+bot = Client("souldmsbot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
 # ================= 🌟 CUSTOMIZATION HUB 🌟 =================
 BTN_EMOJIS = {
