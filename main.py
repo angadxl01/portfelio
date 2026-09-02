@@ -27,8 +27,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 # ================= DETAILS =================
 API_ID = 36645562
 API_HASH = "ccad405579d80b82492abbf4a7777907"
-# 🔥 Prince DMS Bot Token
-BOT_TOKEN = "8822648253:AAGZroIwI4F7udtFlhABotrsqjAXm_qcSq4"  
+# 🔥 Soul dms bot
+BOT_TOKEN = "8848003780:AAE3_Aekr_BY6VJARAzpSjLwnPHttYm3-uA"  
 # 🔥 Updated MongoDB
 MONGO_URL = "mongodb+srv://aritraff0990_db_user:FpQjh08nTcyXMWmm@princedmsbot.lz4h7ql.mongodb.net/?appName=Princedmsbot"
 
@@ -342,7 +342,7 @@ Welcome to the most advanced and secure Telegram automation engine. Maximize you
 {E_CHK} Expand your audience securely!
 🎁 Claim your <b>{free_limit} Free DMs</b> trial today.
 
-Developed by - @WG_PRINCEE"""
+Developed by - @tgsoulseller """
 
     btns = [
         [ibtn("START MASS DM CAMPAIGN", "start_dm", style="success", icon=BTN_EMOJIS["start"])],
