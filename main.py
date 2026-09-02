@@ -1,1339 +1,1752 @@
 import os
-import aiohttp
+import sqlite3
+import re
 import asyncio
 import time
+import logging
+import csv
+import zipfile
+import shutil
 import html
-import traceback
-import sys
-import re
-import imaplib
-import email
 from datetime import datetime
 
-# 🔥 FIX: Python 3.14+ er jonno Pyrogram import korar aage Event Loop set kora 🔥
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
+from telethon import TelegramClient, events, Button
+from telethon.errors import (
+    SessionPasswordNeededError, 
+    MessageNotModifiedError,
+    UserNotParticipantError,
+    ChatAdminRequiredError
+)
+from telethon.tl.functions.channels import GetParticipantRequest
+from telethon.tl.functions.account import GetPasswordRequest
 
-from pyrogram import Client, filters, enums, idle
-from pyrogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.errors import SessionPasswordNeeded, FloodWait, UserNotParticipant, UserAlreadyParticipant
-from pyrogram.raw.functions.messages import GetChatInviteImporters, CheckChatInvite
-from pyrogram.raw.types import InputUserEmpty
-from pyrogram.handlers import MessageHandler, CallbackQueryHandler, ChatJoinRequestHandler
-from motor.motor_asyncio import AsyncIOMotorClient
+# ================= SAFE STYLED & CUSTOM EMOJI BUTTON WRAPPERS =================
+_orig_btn_inline = Button.inline
+_orig_btn_text = Button.text
+_orig_btn_url = Button.url
 
-# ================= DETAILS =================
-API_ID = 36645562
-API_HASH = "ccad405579d80b82492abbf4a7777907"
-# 🔥 Soul dms bot
-BOT_TOKEN = "8848003780:AAE3_Aekr_BY6VJARAzpSjLwnPHttYm3-uA"  
-# 🔥 Updated MongoDB
-MONGO_URL = "mongodb+srv://aritraff0990_db_user:FpQjh08nTcyXMWmm@princedmsbot.lz4h7ql.mongodb.net/?appName=Princedmsbot"
-
-ADMINS = [8895089247] 
-bot = Client("souldmsbot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
-
-# ================= 🌟 CUSTOMIZATION HUB 🌟 =================
-BTN_EMOJIS = {
-    "start": "6154578037976339054",   
-    "user": "5870994129244131212",    
-    "money": "5870892901159932239",   
-    "diamond": "5276239041052828276", 
-    "add": "6032693626394382504",     
-    "cross": "6086741365998227951",   
-    "tick": "6089196601232854885",    
-    "home": "5215260113291455937",    
-    "shield": "6082526379583212989",  
-    "setting": "5258332798409783582", 
-    "target": "6260516734931833587",  
-    "globe": "6147673955357431919"    
-}
-
-# ================= IST TIME HELPERS =================
-def get_ist(): return time.gmtime(time.time() + 19800)
-def get_ist_str(fmt="%Y-%m-%d"): return time.strftime(fmt, get_ist())
-def get_ist_ts_str(ts, fmt="%d %b %Y, %I:%M %p"): return time.strftime(fmt, time.gmtime(ts + 19800))
-
-# ================= GMAIL SETUP =================
-GMAIL_USER = "chaubeyaakriti60@gmail.com"
-GMAIL_PASS = "knaglwybbznvfjsh"
-
-def check_payment_in_gmail(utr_to_find):
+def custom_text_button(text, *, resize=True, single_use=None, selective=None, style=None, icon_custom_emoji_id=None):
     try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(GMAIL_USER, GMAIL_PASS)
-        mail.select("inbox")
-        status, messages = mail.search(None, f'(TEXT "{utr_to_find}")')
-        if status == "OK" and messages[0]:
-            mail_ids = messages[0].split()
-            for mail_id in mail_ids[-1:]: 
-                status, msg_data = mail.fetch(mail_id, "(RFC822)")
-                for response_part in msg_data:
-                    if isinstance(response_part, tuple):
-                        msg = email.message_from_bytes(response_part[1])
-                        body = ""
-                        if msg.is_multipart():
-                            for part in msg.walk():
-                                if part.get_content_type() == "text/plain": body += part.get_payload(decode=True).decode(errors='ignore')
-                        else: body = msg.get_payload(decode=True).decode(errors='ignore')
-                        clean_body = re.sub(r'\s+', ' ', body).upper()
-                        amounts = re.findall(r'(?:₹|RS\.?|INR)\s*([\d\.]+)', clean_body)
-                        if utr_to_find in clean_body and amounts:
-                            mail.logout(); return float(amounts[0]) 
-        mail.logout(); return None 
-    except Exception: return None
-
-# ================= PREMIUM ANIMATED TEXT EMOJIS =================
-def e(eid, fb): return f"<tg-emoji emoji-id='{eid}'>{fb}</tg-emoji>"
-
-E_CHK = e(BTN_EMOJIS["tick"], "✅")   
-E_DIA = e(BTN_EMOJIS["diamond"], "💎")   
-E_SHD = e(BTN_EMOJIS["shield"], "🛡️")   
-E_WRN = e("5350460637182993292", "⚠️")   
-E_LNK = e("5870782662234346251", "🔗")   
-E_CAL = e("5891105528356018797", "📅")   
-E_MED = e("5870984130560266604", "🎖️")   
-E_TRI = e(BTN_EMOJIS["target"], "🔻")   
-E_START = e(BTN_EMOJIS["start"], "🚀") 
-E_PROF = e(BTN_EMOJIS["user"], "👤")  
-E_ADD = e(BTN_EMOJIS["add"], "➕")   
-E_WAIT = e("6161378495919295545", "⏳")  
-E_SYNC = e("6273997297244180325", "🔄")  
-E_ACT = e("6028497653799588476", "⚡")   
-E_ADM = e(BTN_EMOJIS["setting"], "🛠️")  
-E_STAT = e("6183531013814096319", "💻")  
-E_MONEY = e(BTN_EMOJIS["money"], "💸") 
-E_PREM = e("6154611916678369390", "⚜️")  
-E_PLAY = e("6183901617952132937", "▶️")  
-E_STOP = e("6059631768649077274", "🛑")  
-
-# --- 💥 RAW API ENGINE FOR COLOR BUTTONS WITH FALLBACK 💥 ---
-def ibtn(text, cb=None, url=None, style="primary", icon=None):
-    btn = {"text": text, "style": style}
-    if cb: btn["callback_data"] = cb 
-    if url: btn["url"] = url
-    if icon: btn["icon_custom_emoji_id"] = icon
+        if style or icon_custom_emoji_id:
+            kwargs = {'resize': resize, 'single_use': single_use, 'selective': selective}
+            if style: kwargs['style'] = style
+            if icon_custom_emoji_id: kwargs['icon_custom_emoji_id'] = int(icon_custom_emoji_id)
+            return _orig_btn_text(text, **kwargs)
+    except (TypeError, Exception):
+        pass
+    btn = _orig_btn_text(text, resize=resize, single_use=single_use, selective=selective)
+    if style:
+        try: setattr(btn, 'style', style)
+        except: pass
+    if icon_custom_emoji_id:
+        try: setattr(btn, 'icon_custom_emoji_id', int(icon_custom_emoji_id))
+        except: pass
     return btn
 
-class MockMessage:
-    def __init__(self, chat_id, message_id):
-        self.chat = type('Chat', (), {'id': chat_id})()
-        self.id = message_id
-
-    async def delete(self):
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
-        async with aiohttp.ClientSession() as session:
-            await session.post(url, json={"chat_id": self.chat.id, "message_id": self.id})
-
-async def api_send(chat_id, text, kb=None, photo=None):
-    payload = {"chat_id": chat_id, "parse_mode": "HTML"}
-    if text and not photo: payload["text"] = text
-    elif text and photo: payload["caption"] = text
-    if photo: payload["photo"] = photo
-    if kb: payload["reply_markup"] = kb
-    
-    method = "sendPhoto" if photo else "sendMessage"
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
-            data = await resp.json()
-            if data.get("ok"): 
-                return MockMessage(chat_id, data["result"]["message_id"])
-                
+def custom_inline_button(text, data=None, *, style=None, icon_custom_emoji_id=None):
     try:
-        standard_kb = None
-        if kb and "inline_keyboard" in kb:
-            pyro_btns = []
-            for row in kb["inline_keyboard"]:
-                pyro_row = []
-                for b in row:
-                    pyro_row.append(InlineKeyboardButton(text=b.get("text",""), callback_data=b.get("callback_data"), url=b.get("url")))
-                pyro_btns.append(pyro_row)
-            standard_kb = InlineKeyboardMarkup(pyro_btns)
-            
-        if photo:
-            m = await bot.send_photo(chat_id, photo=photo, caption=text, reply_markup=standard_kb, parse_mode=enums.ParseMode.HTML)
-        else:
-            m = await bot.send_message(chat_id, text, reply_markup=standard_kb, parse_mode=enums.ParseMode.HTML)
-        return MockMessage(chat_id, m.id)
-    except Exception as e:
-        return MockMessage(chat_id, None)
+        if style or icon_custom_emoji_id:
+            kwargs = {}
+            if style: kwargs['style'] = style
+            if icon_custom_emoji_id: kwargs['icon_custom_emoji_id'] = int(icon_custom_emoji_id)
+            return _orig_btn_inline(text, data, **kwargs)
+    except (TypeError, Exception):
+        pass
+    btn = _orig_btn_inline(text, data)
+    if style:
+        try: setattr(btn, 'style', style)
+        except: pass
+    if icon_custom_emoji_id:
+        try: setattr(btn, 'icon_custom_emoji_id', int(icon_custom_emoji_id))
+        except: pass
+    return btn
 
-async def api_edit(chat_id, msg_id, text, kb=None):
-    payload = {"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML"}
-    if kb: payload["reply_markup"] = kb
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
-            data = await resp.json()
-            if data.get("ok"): 
-                return MockMessage(chat_id, data["result"]["message_id"])
-                
+def custom_url_button(text, url, *, style=None, icon_custom_emoji_id=None):
     try:
-        standard_kb = None
-        if kb and "inline_keyboard" in kb:
-            pyro_btns = []
-            for row in kb["inline_keyboard"]:
-                pyro_row = []
-                for b in row:
-                    pyro_row.append(InlineKeyboardButton(text=b.get("text",""), callback_data=b.get("callback_data"), url=b.get("url")))
-                pyro_btns.append(pyro_row)
-            standard_kb = InlineKeyboardMarkup(pyro_btns)
-        m = await bot.edit_message_text(chat_id, msg_id, text, reply_markup=standard_kb, parse_mode=enums.ParseMode.HTML)
-        return MockMessage(chat_id, m.id)
-    except Exception:
-        return MockMessage(chat_id, msg_id)
+        if style or icon_custom_emoji_id:
+            kwargs = {}
+            if style: kwargs['style'] = style
+            if icon_custom_emoji_id: kwargs['icon_custom_emoji_id'] = int(icon_custom_emoji_id)
+            return _orig_btn_url(text, url, **kwargs)
+    except (TypeError, Exception):
+        pass
+    btn = _orig_btn_url(text, url)
+    if style:
+        try: setattr(btn, 'style', style)
+        except: pass
+    if icon_custom_emoji_id:
+        try: setattr(btn, 'icon_custom_emoji_id', int(icon_custom_emoji_id))
+        except: pass
+    return btn
 
-async def api_edit_caption(chat_id, msg_id, text, kb=None):
-    payload = {"chat_id": chat_id, "message_id": msg_id, "caption": text, "parse_mode": "HTML"}
-    if kb: payload["reply_markup"] = kb
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageCaption"
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
-            data = await resp.json()
-            if data.get("ok"): 
-                return MockMessage(chat_id, data["result"]["message_id"])
-                
-    try:
-        standard_kb = None
-        if kb and "inline_keyboard" in kb:
-            pyro_btns = []
-            for row in kb["inline_keyboard"]:
-                pyro_row = []
-                for b in row:
-                    pyro_row.append(InlineKeyboardButton(text=b.get("text",""), callback_data=b.get("callback_data"), url=b.get("url")))
-                pyro_btns.append(pyro_row)
-            standard_kb = InlineKeyboardMarkup(pyro_btns)
-        m = await bot.edit_message_caption(chat_id, msg_id, text, reply_markup=standard_kb, parse_mode=enums.ParseMode.HTML)
-        return MockMessage(chat_id, m.id)
-    except Exception:
-        return MockMessage(chat_id, msg_id)
+Button.text = custom_text_button
+Button.inline = custom_inline_button
+Button.url = custom_url_button
 
-async def safe_edit(query, text, kb=None):
-    chat_id = query.message.chat.id
-    msg_id = query.message.id
-    if query.message.photo or query.message.video or query.message.document:
-        await query.message.delete()
-        return await api_send(chat_id, text, kb=kb)
-    else:
-        return await api_edit(chat_id, msg_id, text, kb=kb)
+# ================= CONFIGURATION =================
+API_ID = 36645562
+API_HASH = "ccad405579d80b82492abbf4a7777907"
+BOT_TOKEN = "8627528321:AAFSSdgHID0Mizwhx5hxulhIa-CErWR5Yu0" 
+ADMIN_ID = 8895089247
 
-# ================= MONGODB SETUP =================
-db_client, db, users_col, settings_col = None, None, None, None
-USER_STATES, ACTIVE_TASKS = {}, {}
+# CHANNELS
+LOG_CHANNEL_ID = -1003940330621 
+CHECK_CHANNELS = [-1003940330621, -1003468139933]
+JOIN_URLS = [
+    "https://t.me/+5ie3z_oE12UzYWE1",
+    "https://t.me/+3R-sOuFv4mY5NmZl"
+]
 
-async def init_db():
-    global db_client, db, users_col, settings_col
-    db_client = AsyncIOMotorClient(MONGO_URL, tlsAllowInvalidCertificates=True, serverSelectionTimeoutMS=3000)
-    db = db_client["Dmsincreaser"]
-    users_col = db["users"]; settings_col = db["settings"]
-    
-    config = await settings_col.find_one({"_id": "config"})
-    if not config:
-        await settings_col.insert_one({
-            "_id": "config", "price_1d_inr": "25", "price_1d_usd": "0.5", "price_3d_inr": "60", "price_3d_usd": "1.5",
-            "price_7d_inr": "120", "price_7d_usd": "3", "price_1m_inr": "350", "price_1m_usd": "8", 
-            "upi_fampay": "not_set", "upi_manual": "not_set", "crypto": "not_set", "auto_payment_status": False,
-            "free_trial_limit": 100, "msg_delay": 0, "log_channel": "none", "success_log_channel": "none", "leaderboard_channel": "none",
-            "free_channel_id": "none", "free_channel_link": "none", "total_sales_inr": 0, "total_sales_usd": 0, "global_dms": 0, "sales_history": {},
-            "qr_fampay": "none", "qr_manual": "none", "qr_crypto": "none", "fsub1": "none", "fsub2": "none", "fsub3": "none", "fsub4": "none", "fsub5": "none", 
-            "reqall_id": "none", "reqall_link": "none", "website_link": "not_set", "pending_bot_link": "not_set", "forward_bot_link": "not_set",
-            "ldb_time": 21, "free_req_limit": 300, "ref_bonus": 50, "maintenance": False
-        })
+# LINKS & MEDIA
+TERMS_URL = "https://tgtele.onrender.com/"
+
+OTP_REGEX = r"\b\d{4,8}\b" 
+AUTO_CANCEL_SECONDS = 600 
+
+# ================= TELEGRAM CUSTOM TG-EMOJIS =================
+P_YES = '<tg-emoji emoji-id="6267008582294705964">✅</tg-emoji>'
+P_NO = '<tg-emoji emoji-id="5785177332595561481">❌</tg-emoji>'
+P_PKG = '<tg-emoji emoji-id="6269214795325510848">📦</tg-emoji>'
+P_MONEY = '<tg-emoji emoji-id="6267068789146260253">💰</tg-emoji>'
+P_USDT = '<tg-emoji emoji-id="6030805455691846426">💵</tg-emoji>'
+P_INR = '₹'
+P_TG = '<tg-emoji emoji-id="6030595736733749484">✈️</tg-emoji>'
+P_GIFT = '<tg-emoji emoji-id="6269214795325510848">🎁</tg-emoji>'
+P_STATS = '<tg-emoji emoji-id="6033118016407868078">📊</tg-emoji>'
+P_CARD = '<tg-emoji emoji-id="6028517788606272241">💳</tg-emoji>'
+P_USERS = '<tg-emoji emoji-id="6034834452843074121">👥</tg-emoji>'
+P_CAL = '<tg-emoji emoji-id="6266947228686892459">📅</tg-emoji>'
+P_PC = '<tg-emoji emoji-id="6028461966916327262">💻</tg-emoji>'
+P_EYE = '<tg-emoji emoji-id="5897520981135593826">👁️</tg-emoji>'
+P_CW = '<tg-emoji emoji-id="6028517788606272241">👛</tg-emoji>'
+P_ON = '<tg-emoji emoji-id="6032975852990370635">🟢</tg-emoji>'
+P_OFF = '<tg-emoji emoji-id="6267262260243076354">🛑</tg-emoji>'
+P_ID = '<tg-emoji emoji-id="5769547529993588669">👑</tg-emoji>'
+P_KEY = '<tg-emoji emoji-id="6282846669335702032">⌨️</tg-emoji>'
+P_GLOBE = '<tg-emoji emoji-id="6028126693179264852">🌐</tg-emoji>'
+P_CART = '<tg-emoji emoji-id="5780824606579364273">🛒</tg-emoji>'
+P_STORE = '<tg-emoji emoji-id="6028497653799588476">🏬</tg-emoji>'
+P_OTP = '<tg-emoji emoji-id="6028102362189533369">🔢</tg-emoji>'
+P_2FA = '<tg-emoji emoji-id="6282846669335702032">🔐</tg-emoji>'
+P_FLAG = '<tg-emoji emoji-id="5967276872134824140">📍</tg-emoji>'
+P_PHONE = '<tg-emoji emoji-id="6028500960924406167">📱</tg-emoji>'
+P_WAIT = '<tg-emoji emoji-id="6267229004311303657">⏳</tg-emoji>'
+P_TIME = '<tg-emoji emoji-id="6285240160120477644">⏰</tg-emoji>'
+P_WARN = '<tg-emoji emoji-id="6267039884016358504">⚠️</tg-emoji>'
+P_DOC = '<tg-emoji emoji-id="6264777724741556322">📃</tg-emoji>'
+P_ASST = '<tg-emoji emoji-id="6267150926100829360">🤖</tg-emoji>'
+P_ACC = '<tg-emoji emoji-id="6282567341842633593">👤</tg-emoji>'
+P_FIRE = '<tg-emoji emoji-id="6264785189394717307">🔥</tg-emoji>'
+P_STAR = '<tg-emoji emoji-id="6267118537752450044">🌟</tg-emoji>'
+P_DIAMOND = '<tg-emoji emoji-id="5767137507879685567">💎</tg-emoji>'
+P_BELL = '<tg-emoji emoji-id="5915814406490427591">🔔</tg-emoji>'
+P_CROWN = '<tg-emoji emoji-id="5769547529993588669">👑</tg-emoji>'
+
+# ================= INITIALIZATION =================
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+os.makedirs("sessions", exist_ok=True)
+
+session_name = f"bot_session_{BOT_TOKEN.split(':')[0]}"
+bot = TelegramClient(session_name, API_ID, API_HASH)
+bot.parse_mode = 'html'
+
+db = sqlite3.connect("otp_bot_final.db", check_same_thread=False, timeout=20)
+db.execute("PRAGMA journal_mode=WAL;")
+cur = db.cursor()
+
+active_orders = {}      
+waiting_proof = {}      
+deposit_input = {} 
+admin_dep_state = {}    
+user_spam_cooldown = {} 
+session_buy_state = {}  
+custom_dep_amt = {}     
+
+user_locks = {}
+
+def get_user_lock(uid):
+    if uid not in user_locks:
+        user_locks[uid] = asyncio.Lock()
+    return user_locks[uid]
+
+# ================= DATABASE SCHEMA =================
+def setup_db():
+    cur.executescript("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        balance INTEGER DEFAULT 0,
+        referred_by INTEGER,
+        total_deposited INTEGER DEFAULT 0,
+        joined_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        banned INTEGER DEFAULT 0,
+        discount INTEGER DEFAULT 0,
+        terms_accepted INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE IF NOT EXISTS stock (
+        phone TEXT PRIMARY KEY,
+        session_file TEXT,
+        country_name TEXT,
+        country_icon TEXT DEFAULT '',
+        account_year INTEGER,
+        category TEXT DEFAULT 'Good',
+        price INTEGER,
+        available INTEGER DEFAULT 1,
+        twofa TEXT DEFAULT 'None',
+        added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS auto_prices (
+        country TEXT,
+        year TEXT,
+        price INTEGER,
+        PRIMARY KEY (country, year)
+    );
+    CREATE TABLE IF NOT EXISTS deposits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        amount INTEGER,
+        method_name TEXT,
+        status TEXT, 
+        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        country TEXT,
+        year INTEGER,
+        price INTEGER,
+        phone TEXT,
+        otp TEXT,
+        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS custom_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        caption TEXT,
+        qr_file_id TEXT
+    );
+    CREATE TABLE IF NOT EXISTS admins (
+        user_id INTEGER PRIMARY KEY,
+        p_add_stock INTEGER DEFAULT 0,
+        p_manage_stock INTEGER DEFAULT 0,
+        p_stats INTEGER DEFAULT 0,
+        p_bal INTEGER DEFAULT 0,
+        p_settings INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS custom_countries (
+        code TEXT PRIMARY KEY,
+        name TEXT,
+        flag TEXT DEFAULT ''
+    );
+    """)
+    db.commit()
+
+setup_db()
 
 # ================= HELPER FUNCTIONS =================
-async def get_user(user_id):
-    user_id = str(user_id)
-    today = get_ist_str("%Y-%m-%d")
-    user = await users_col.find_one({"_id": user_id})
-    if not user:
-        user = {"_id": user_id, "username": "", "banned": False, "premium_expiry": 0, "sessions": [], "saved_channels": [], "custom_msg_type": "text", "custom_msg": "HELLO", "custom_caption": "", "total_dms": 0, "daily_dms": 0, "last_date": today, "messaged_users": {}, "pending_chats": []}
-        await users_col.insert_one(user)
-    else:
-        if user.get("last_date") != today:
-            await users_col.update_one({"_id": user_id}, {"$set": {"daily_dms": 0, "last_date": today}})
-            user["daily_dms"] = 0; user["last_date"] = today
-    return user
+def is_bot_online():
+    res = cur.execute("SELECT value FROM settings WHERE key='bot_status'").fetchone()
+    return res[0] == 'on' if res else True
 
-async def is_premium(user_id): return (await get_user(user_id)).get("premium_expiry", 0) > time.time()
+def is_admin(uid):
+    if uid == ADMIN_ID: return True
+    row = cur.execute("SELECT user_id FROM admins WHERE user_id=?", (uid,)).fetchone()
+    return bool(row)
 
-# ================= BACKGROUND TASKS =================
-async def auto_leaderboard_task():
-    while True:
+def has_perm(uid, perm):
+    if uid == ADMIN_ID: return True
+    row = cur.execute(f"SELECT {perm} FROM admins WHERE user_id=?", (uid,)).fetchone()
+    return bool(row and row[0] == 1)
+
+def ensure_user(uid):
+    cur.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (uid,))
+    db.commit()
+
+def get_usdt_rate():
+    res = cur.execute("SELECT value FROM settings WHERE key='usdt_rate'").fetchone()
+    try: return float(res[0]) if res else 94.0
+    except: return 94.0
+
+def get_support_url():
+    res = cur.execute("SELECT value FROM settings WHERE key='support_url'").fetchone()
+    url = res[0] if res and res[0] else "https://t.me/tgtelehelpbot"
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://t.me/" + url.lstrip("@")
+    return url
+
+def get_support_channel_url():
+    res = cur.execute("SELECT value FROM settings WHERE key='support_channel_url'").fetchone()
+    url = res[0] if res and res[0] else JOIN_URLS[0]
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://t.me/" + url.lstrip("@")
+    return url
+
+def to_usd(inr):
+    return round(inr / get_usdt_rate(), 2)
+
+def is_user_banned(uid):
+    res = cur.execute("SELECT banned FROM users WHERE user_id=?", (uid,)).fetchone()
+    return res and res[0] == 1
+
+def update_balance(uid, amount):
+    cur.execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (amount, uid))
+    db.commit()
+
+def delete_session_files(session_path):
+    base = session_path if not session_path.endswith('.session') else session_path[:-8]
+    for ext in ['.session', '.session-wal', '.session-shm', '.session-journal']:
         try:
-            config = await settings_col.find_one({"_id": "config"})
-            ldb_channel = config.get("leaderboard_channel", "none")
-            ldb_time = int(config.get("ldb_time", 21))
-            
-            if ldb_channel != "none" and get_ist().tm_hour == ldb_time:
-                today = get_ist_str("%Y-%m-%d")
-                last_post = config.get("last_ldb_post", "")
-                if last_post != today:
-                    top_today = await users_col.aggregate([{"$match": {"last_date": today, "daily_dms": {"$gt": 0}}}, {"$sort": {"daily_dms": -1}}, {"$limit": 10}]).to_list(10)
-                    if top_today:
-                        text = f"{E_MED} <b>Daily DM Leaderboard ({today})</b> {E_MED}\n\n"
-                        for i, u in enumerate(top_today):
-                            un = f"(@{u['username']})" if u.get('username') and u['username'] != "N/A" else ""
-                            text += f"<b>{i+1}.</b> <code>...{str(u['_id'])[-4:]}</code> {un} - {u['daily_dms']} DMs\n"
-                        text += f"\n{E_START} Automatically Generated"
-                        try:
-                            lc_id = int(ldb_channel) if str(ldb_channel).replace("-", "").isdigit() else ldb_channel
-                            await api_send(lc_id, text)
-                            await settings_col.update_one({"_id": "config"}, {"$set": {"last_ldb_post": today}})
-                        except Exception: pass
+            if os.path.exists(base + ext): os.remove(base + ext)
         except: pass
-        await asyncio.sleep(1800)
 
-# ================= CORE HANDLERS =================
-async def handle_join_requests(client, message):
-    user_id = str(message.from_user.id); chat_id = str(message.chat.id)
-    await users_col.update_one({"_id": user_id}, {"$addToSet": {"pending_chats": chat_id}}, upsert=True)
-
-async def check_force_join(user_id):
-    if int(user_id) in ADMINS: return True, []
-    config = await settings_col.find_one({"_id": "config"}); u = await get_user(user_id)
-    pending_chats = set(u.get("pending_chats", []))
-    fsubs = [config.get(f"fsub{i}", "none") for i in range(1, 6)]
-    not_joined = []
-    
-    for i, fsub in enumerate(fsubs):
-        if fsub == "none" or str(fsub).strip() == "": continue
-        parts = str(fsub).split(" "); chat_id = parts[0]; link = parts[1] if len(parts) > 1 else chat_id 
-        if str(chat_id) in pending_chats or str(chat_id).replace("-100", "") in pending_chats: continue
+async def check_channel_joined(uid):
+    if is_admin(uid): return True
+    for ch in CHECK_CHANNELS:
         try:
-            if chat_id.startswith("-100"): await bot.get_chat_member(int(chat_id), int(user_id))
-            elif "t.me/" in chat_id: await bot.get_chat_member(chat_id.split("/")[-1], int(user_id))
-            else: await bot.get_chat_member(chat_id, int(user_id))
-        except UserNotParticipant: not_joined.append((f"Channel {i+1}", link))
-        except Exception: not_joined.append((f"Channel {i+1}", link))
-
-    reqall_id = config.get("reqall_id", "none")
-    if reqall_id != "none":
-        reqall_link = config.get("reqall_link", "none")
-        if str(reqall_id) not in pending_chats and str(reqall_id).replace("-100", "") not in pending_chats:
+            channel = await bot.get_input_entity(ch)
             try:
-                if reqall_id.startswith("-100"): await bot.get_chat_member(int(reqall_id), int(user_id))
-                elif "t.me/" in reqall_id: await bot.get_chat_member(reqall_id.split("/")[-1], int(user_id))
-                else: await bot.get_chat_member(reqall_id, int(user_id))
-            except UserNotParticipant: not_joined.append(("Mandatory Request", reqall_link))
-            except Exception: not_joined.append(("Mandatory Request", reqall_link))
-
-    return len(not_joined) == 0, not_joined
-
-async def get_home_menu(user_id, first_name, config):
-    free_limit = int(config.get('free_trial_limit') or 100)
-
-    text = f"""✦ <i>𝐏𝗿𝗶𝗻𝗰𝗲 𝐃𝐌𝐬 𝐁𝐨𝐭</i> ✦
-<i>Premium Mass DM & Marketing Automation</i>
-
-Welcome to the most advanced and secure Telegram automation engine. Maximize your outreach with zero ban risk, utilizing our high-speed smart nodes.
-
-━━━━━━━━━━━━━━━━━━━━
-{E_PROF} <b>User Profile:</b> {first_name}
-🆔 <b>Account ID:</b> <code>{user_id}</code>
-{E_ACT} <b>Server Node:</b> 🟢 100% Online
-━━━━━━━━━━━━━━━━━━━━
-
-{E_CHK} Expand your audience securely!
-🎁 Claim your <b>{free_limit} Free DMs</b> trial today.
-
-Developed by - @tgsoulseller """
-
-    btns = [
-        [ibtn("START MASS DM CAMPAIGN", "start_dm", style="success", icon=BTN_EMOJIS["start"])],
-        [ibtn("🚀 FAST Auto-Forward DM", "set_fwd_msg", style="primary", icon=BTN_EMOJIS["globe"])], 
-        [ibtn("Scrape Group", "scrape_group", style="primary", icon=BTN_EMOJIS["user"]), ibtn("Invite & Earn", "invite_earn", style="primary", icon=BTN_EMOJIS["money"])],
-        [ibtn("VIP Premium", "buy_premium", style="danger", icon=BTN_EMOJIS["diamond"]), ibtn("My Account", "my_account", style="primary", icon=BTN_EMOJIS["user"])],
-        [ibtn("Add Session", "add_session", style="success", icon=BTN_EMOJIS["add"]), ibtn("Remove Session", "remove_session", style="danger", icon=BTN_EMOJIS["cross"])],
-        [ibtn("Tutorial & Terms", "how_to_use", style="primary", icon=BTN_EMOJIS["setting"])],
-        [ibtn("Contact Support", url="https://t.me/WG_PRINCEE", style="danger", icon=BTN_EMOJIS["target"])]
-    ]
-    return text, {"inline_keyboard": btns}
-
-async def get_chat_safely(client, raw_link, fallback_id):
-    try:
-        parsed_id = int(fallback_id) if str(fallback_id).lstrip('-').isdigit() else fallback_id
-        return await client.get_chat(parsed_id)
-    except Exception: pass
-    link = str(raw_link).strip()
-    if "t.me/" in link:
-        if "+" in link or "joinchat" in link:
-            hash_str = link.split("+")[-1].replace("/", "") if "+" in link else link.split("joinchat/")[-1].replace("/", "")
-            try: return await client.join_chat(link)
-            except UserAlreadyParticipant:
-                try:
-                    res = await client.invoke(CheckChatInvite(hash=hash_str))
-                    title = getattr(res, 'title', None)
-                    if not title and hasattr(res, 'chat'): title = getattr(res.chat, 'title', None)
-                    if title:
-                        async for d in client.get_dialogs(limit=5000):
-                            if d.chat and d.chat.title == title: return d.chat
-                except Exception: pass
-            except Exception: pass
-        else:
-            username = "@" + link.split("t.me/")[-1].split("/")[0].replace("@", "")
-            try: return await client.get_chat(username)
-            except Exception: pass
-    parsed_id_str = str(fallback_id)
-    async for d in client.get_dialogs(limit=5000):
-        if str(d.chat.id) == parsed_id_str or (d.chat.username and d.chat.username.lower() == parsed_id_str.replace("@", "").lower()): return d.chat
-    raise Exception("Peer Link Unresolved! Ensure the link is correct or the Alt account is Admin inside the private target group.")
-
-async def check_and_show_stats(client, user_id, user_data, config, input_link, msg_to_edit, save_new=False):
-    userbot = None
-    try:
-        userbot = Client(f"check_{user_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=user_data['sessions'][0], in_memory=True)
-        await userbot.start(); await asyncio.sleep(1) 
-        chat = await get_chat_safely(userbot, input_link, input_link)
-        real_chat_id = chat.id; chat_title = chat.title
-        
-        try:
-            peer = await userbot.resolve_peer(real_chat_id)
-            r = await userbot.invoke(GetChatInviteImporters(peer=peer, requested=True, offset_date=0, offset_user=InputUserEmpty(), limit=1))
-            pending_count = getattr(r, "count", 0)
-        except Exception as api_err:
-            if "CHAT_ADMIN_REQUIRED" in str(api_err):
-                await userbot.stop()
-                err_text = f"{E_WRN} <b>Admin Privileges Required!</b>\n\nYour Alt Account MUST be an Admin in <b>{html.escape(chat_title)}</b> to fetch join requests.\n\n<i>👉 Promote your Alt to Admin with 'Add Users' permission, then try again.</i>"
-                btn = {"inline_keyboard": [[ibtn("Back Menu", "start_dm", style="danger", icon=BTN_EMOJIS["cross"])]]}
-                return await api_edit(msg_to_edit.chat.id, msg_to_edit.id, err_text, btn)
-            pending_count = 0
-            
-        await userbot.stop()
-        
-        if user_id not in USER_STATES: USER_STATES[user_id] = {}
-        USER_STATES[user_id]["link"] = str(real_chat_id); USER_STATES[user_id]["raw_link"] = str(input_link); USER_STATES[user_id]["state"] = None 
-        
-        if save_new:
-            new_ch = {"id": str(real_chat_id), "title": chat_title, "link": str(input_link)}
-            exists = any(str(existing.get("id")) == str(real_chat_id) for existing in user_data.get("saved_channels", []))
-            if not exists: await users_col.update_one({"_id": user_id}, {"$push": {"saved_channels": new_ch}})
-        
-        msg_delay = int(config.get("msg_delay") or 0)
-        expected_sec = int(pending_count) * msg_delay
-        h, rem = divmod(expected_sec, 3600); m, s = divmod(rem, 60)
-        duration_str = f"{h}h {m}m" if h > 0 else (f"{m}m {s}s" if m > 0 else f"{s}s")
-        
-        stats_text = f"{E_CHK} <b>Channel Found:</b> {html.escape(chat_title)}\n👥 <b>Total Pending Requests:</b> {pending_count}\n⏳ <b>Duration (For All):</b> ~{duration_str}"
-        await api_edit(msg_to_edit.chat.id, msg_to_edit.id, stats_text)
-            
-        sessions = user_data['sessions']
-        if len(sessions) <= 1:
-            USER_STATES[user_id]["sess_idx"] = "all"; USER_STATES[user_id]["state"] = "WAITING_LIMIT"
-            await api_send(user_id, f"🔢 <b>How many DMs do you want to send?</b>\n(Send a number)", {"inline_keyboard": [[ibtn("Cancel", "start_dm", style="danger", icon=BTN_EMOJIS["cross"])]]})
-        else:
-            text = f"{E_SYNC} <b>Multiple Sessions Detected!</b>\nWhich account do you want to use?"
-            btns = [[ibtn(f"Account {i+1}", f"selsess_{i}", style="primary", icon=BTN_EMOJIS["user"])] for i in range(len(sessions))]
-            btns.append([ibtn("Use All Accounts", "selsess_all", style="success", icon=BTN_EMOJIS["tick"])])
-            btns.append([ibtn("Cancel", "start_dm", style="danger", icon=BTN_EMOJIS["cross"])])
-            await api_send(user_id, text, {"inline_keyboard": btns})
-    except Exception as e: 
-        if userbot:
-            try: await userbot.stop()
-            except: pass
-        err_text = f"❌ <b>Error Connection Failed:</b>\n<code>{html.escape(str(e))}</code>\n\n<i>Make sure the Invite link is correct and the Alt account is already inside the channel!</i>"
-        try: await api_edit(msg_to_edit.chat.id, msg_to_edit.id, err_text, {"inline_keyboard": [[ibtn("Back", "start_dm", style="danger", icon=BTN_EMOJIS["cross"])]]})
-        except: await api_send(user_id, err_text)
-
-# 🔥 ULTRA FAST CONCURRENT SENDING ENGINE 🔥
-async def bounded_send(semaphore, client, target_id, m_type, m_cont, m_cap):
-    async with semaphore:
-        try:
-            if m_type == "photo": await client.send_photo(target_id, photo=m_cont, caption=m_cap)
-            elif m_type == "forward_link":
-                ch_username, m_id = m_cont.split("|")
-                await client.forward_messages(target_id, ch_username, int(m_id))
-            else: await client.send_message(target_id, m_cont)
-            return True
-        except FloodWait as fw:
-            await asyncio.sleep(fw.value)
+                user = await bot.get_input_entity(uid)
+            except Exception:
+                user = await bot.get_entity(uid)
+            await bot(GetParticipantRequest(channel=channel, participant=user))
+        except (UserNotParticipantError, ValueError):
             return False
-        except Exception: return False
+        except Exception as e:
+            logger.error(f"Channel Check Error: {e}")
+            return False
+    return True
 
-async def setup_and_execute_dm(user_id, limit, filter_type, delay_mins, is_free, channel_link, raw_link, sess_idx, client):
+COUNTRY_CODES = {
+    '1': 'USA/Canada', '7': 'Russia', '20': 'Egypt', '27': 'South Africa',
+    '31': 'Netherlands', '32': 'Belgium', '33': 'France', '34': 'Spain',
+    '39': 'Italy', '44': 'UK', '46': 'Sweden', '48': 'Poland',
+    '49': 'Germany', '51': 'Peru', '52': 'Mexico', '54': 'Argentina',
+    '55': 'Brazil', '56': 'Chile', '57': 'Colombia', '58': 'Venezuela',
+    '60': 'Malaysia', '61': 'Australia', '62': 'Indonesia', '63': 'Philippines', 
+    '66': 'Thailand', '84': 'Vietnam', '86': 'China', '90': 'Turkey',
+    '91': 'India', '92': 'Pakistan', '93': 'Afghanistan', '94': 'Sri Lanka',
+    '95': 'Myanmar', '98': 'Iran', '212': 'Morocco', '213': 'Algeria',
+    '234': 'Nigeria', '254': 'Kenya', '255': 'Tanzania', '380': 'Ukraine',
+    '880': 'Bangladesh', '964': 'Iraq', '966': 'Saudi Arabia', '971': 'UAE',
+    '998': 'Uzbekistan'
+}
+
+def get_country_info(phone):
+    phone = str(phone).replace(' ', '').replace('+', '')
+    if not phone: return "Unknown"
+    
     try:
-        user_data = await get_user(user_id)
-        config = await settings_col.find_one({"_id": "config"})
-        msg_delay = int(config.get("msg_delay") or 0)
-        un = f"(@{user_data.get('username')})" if user_data.get('username') and user_data.get('username') != "N/A" else ""
-        
-        if delay_mins > 0:
-            await api_send(user_id, f"{E_CAL} <b>Task Scheduled!</b>\nYour Mass DM will automatically start in {delay_mins} minutes.")
-            await asyncio.sleep(delay_mins * 60)
-            
-        sessions_db = user_data.get("sessions", [])
-        sessions_to_use = sessions_db if sess_idx == "all" else [sessions_db[int(sess_idx)]]
-        
-        valid_clients = []
-        for idx, s in enumerate(sessions_to_use):
-            try:
-                c = Client(f"ub_{user_id}_{int(time.time())}_{idx}", api_id=API_ID, api_hash=API_HASH, session_string=s, in_memory=True)
-                await c.start()
-                valid_clients.append(c)
-            except Exception: pass
-                
-        if not valid_clients:
-            return await api_send(user_id, f"{E_WRN} <b>All selected sessions are dead or invalid!</b> Please remove and add a new session.")
-            
-        clients = valid_clients
-        is_alt_dms = (channel_link == "ALT_DMS")
-        chat_title = "Logged-in ID's Active DMs" if is_alt_dms else "Target Channel"
-        chat_id_to_use = "ALT_DMS" if is_alt_dms else None
-        
-        if not is_alt_dms:
-            target_raw = str(config.get("free_channel_link", "none")) if is_free else str(raw_link)
-            fallback_id = config.get("free_channel_id", "none") if is_free else channel_link
-            try:
-                chat = await get_chat_safely(clients[0], target_raw, fallback_id)
-                chat_id_to_use = chat.id; chat_title = chat.title
-            except Exception as ce:
-                for c in clients: 
-                    try: await c.stop()
-                    except: pass
-                return await api_send(user_id, f"{E_WRN} <b>Could not access channel:</b> {ce}")
-
-        ACTIVE_TASKS[user_id] = {"status": "running", "sent": 0, "limit": limit, "start_time": time.time(), "target": html.escape(chat_title)}
-        chat_id_str = str(chat_id_to_use)
-        messaged_list = user_data.get("messaged_users", {}).get(chat_id_str, [])
-        count, skipped, failed = 0, 0, 0
-        
-        f_map = {"flt_all": "All Pending Users", "flt_recent": "Online / Recently Seen", "flt_active": "Active Members", "flt_premium": "Premium Users"}
-        f_name = f_map.get(filter_type, "All Pending Users")
-        eta_str = get_ist_ts_str(time.time() + (limit * msg_delay), "%I:%M %p (IST)")
-        
-        start_text = f"{E_START} <b>Mass DM Started!</b>\n\n🎯 <b>Target:</b> {html.escape(chat_title)}\n📊 <b>Limit:</b> {limit}\n🔄 <b>Sessions:</b> {len(clients)}\n🟢 <b>Filter:</b> {f_name}\n⏳ <b>Expected Completion:</b> {eta_str}\n\n<b>Commands:</b> <code>/chk</code> , <code>/pause</code> , <code>/resume</code> , <code>/stop</code>"
-        await api_send(user_id, start_text)
-        
-        log_channel = config.get("log_channel", "none")
-        if log_channel != "none":
-            try: 
-                lc_id = int(log_channel) if str(log_channel).replace("-", "").isdigit() else log_channel
-                await api_send(lc_id, f"{E_START} <b>New DM Order</b>\nUser: <code>{user_id}</code> {un}\nTarget: {html.escape(chat_title)}\nLimit: {limit}")
-            except Exception: pass
-
-        try:
-            target_ids = []
-            if is_alt_dms:
-                for curr_client in clients:
-                    async for dialog in curr_client.get_dialogs(): 
-                        if dialog.chat and dialog.chat.type == enums.ChatType.PRIVATE:
-                            tid = dialog.chat.id
-                            if tid not in [777000, curr_client.me.id if hasattr(curr_client, "me") and curr_client.me else 0]: 
-                                target_ids.append(tid)
-            else:
-                async for request in clients[0].get_chat_join_requests(chat_id_to_use):
-                    target_ids.append(request.user.id)
-                    
-            m_type = user_data.get("custom_msg_type", "text")
-            m_cont = user_data.get("custom_msg") or "HELLO"
-            m_cap = user_data.get("custom_caption", "")
-            
-            semaphore = asyncio.Semaphore(50) 
-            tasks = []
-            
-            for tid in target_ids:
-                task = ACTIVE_TASKS.get(user_id)
-                if not task: break
-                while task.get("status") == "paused":
-                    await asyncio.sleep(1); task = ACTIVE_TASKS.get(user_id)
-                    if not task: break
-                if not task or task.get("status") == "stopped" or count >= limit: break 
-                
-                if str(tid) in messaged_list or tid in messaged_list:
-                    skipped += 1; continue
-                    
-                curr_client = clients[count % len(clients)]
-                tasks.append(bounded_send(semaphore, curr_client, tid, m_type, m_cont, m_cap))
-                messaged_list.append(tid)
-                count += 1
-                
-                if len(tasks) >= 100:
-                    results = await asyncio.gather(*tasks)
-                    failed += results.count(False)
-                    ACTIVE_TASKS[user_id]["sent"] = count
-                    tasks = []
-                    if msg_delay > 0: await asyncio.sleep(msg_delay)
-            
-            if tasks:
-                results = await asyncio.gather(*tasks)
-                failed += results.count(False)
-                ACTIVE_TASKS[user_id]["sent"] = count
-
-        except Exception as e: 
-            await api_send(user_id, f"❌ <b>Mass DM Ended Prematurely:</b>\n<code>{html.escape(str(e))}</code>")
-        finally:
-            for c in clients:
-                try: await c.stop() 
-                except: pass
-            
-            today = get_ist_str("%Y-%m-%d")
-            await users_col.update_one({"_id": str(user_id)}, {"$inc": {"total_dms": count, "daily_dms": count}, "$set": {f"messaged_users.{chat_id_str}": messaged_list, "last_date": today, "sessions": []}})
-            await settings_col.update_one({"_id": "config"}, {"$inc": {"global_dms": count}})
-            
-            success_log = config.get("success_log_channel", "none")
-            if success_log != "none":
-                try: 
-                    slc_id = int(success_log) if str(success_log).replace("-", "").isdigit() else slc_id
-                    await api_send(slc_id, f"{E_CHK} <b>Order Completed</b>\nUser: <code>{user_id}</code>\nTarget: {html.escape(chat_title)}\nSent: {count}")
-                except Exception: pass
-
-            report = f"📊 <b>Post-Campaign Analytics Report</b>\n\n{E_LNK} <b>Target:</b> {html.escape(chat_title)}\n{E_CHK} <b>Successfully Queued/Sent:</b> {count}\n⏩ <b>Skipped (Dupes):</b> {skipped}\n❌ <b>Failed Blocks:</b> {failed}\n\n🚪 <b>Security:</b> <i>Your Telegram session was logged out securely.</i>"
-            try: await api_send(user_id, report)
-            except: pass
-            if user_id in ACTIVE_TASKS: del ACTIVE_TASKS[user_id]
-            
-    except Exception as general_error:
-        try: await api_send(user_id, f"❌ <b>Campaign Crash Guard Activated:</b>\n<code>{html.escape(str(general_error))}</code>")
-        except: pass
-
-# ================= ROUTE HANDLERS =================
-async def start_cmd(client, message):
-    try:
-        user_id = str(message.chat.id)
-        u = await get_user(user_id)
-        config = await settings_col.find_one({"_id": "config"})
-
-        if int(user_id) not in ADMINS:
-            joined, not_joined_list = await check_force_join(user_id)
-            if not joined:
-                text = f"{E_WRN} <b>Mandatory Action Required!</b>\n\nTo ensure quality service, you must join our official channels before using the bot."
-                btn_list = []; row = []
-                for i, (idx, link) in enumerate(not_joined_list):
-                    fixed_link = link if str(link).startswith("http") else f"https://t.me/{str(link).replace('@','')}"
-                    row.append(ibtn(f"{idx}", url=fixed_link, style="primary", icon=BTN_EMOJIS["target"]))
-                    if len(row) == 2: btn_list.append(row); row = []
-                if row: btn_list.append(row)
-                btn_list.append([ibtn("I Have Joined / Requested", "check_join", style="success", icon=BTN_EMOJIS["tick"])])
-                return await api_send(user_id, text, {"inline_keyboard": btn_list})
-
-        first_name = html.escape(message.from_user.first_name if message.from_user else "User")
-        text, btn = await get_home_menu(user_id, first_name, config)
-        await api_send(user_id, text, kb=btn)
-    except Exception as e: 
-        print(f"Error in start_cmd: {e}")
-
-async def shortcut_cmds(client, message):
-    user_id = str(message.chat.id); cmd = message.command[0]; config = await settings_col.find_one({"_id": "config"})
-    
-    if int(user_id) not in ADMINS:
-        joined, _ = await check_force_join(user_id)
-        if not joined: return await api_send(user_id, f"❌ <b>Please use /start to verify channels first.</b>")
-
-    if user_id not in USER_STATES: USER_STATES[user_id] = {}
-
-    if cmd == "myaccount":
-        has_prem = await is_premium(user_id); u = await get_user(user_id)
-        if has_prem:
-            exp_str = get_ist_ts_str(u['premium_expiry'])
-            status = f"{E_DIA} Premium\n{E_CAL} <b>Expires:</b> {exp_str}"
-        else: status = f"{E_WAIT} Free Tier"
-        text = f"{E_PROF} <b>Account Details:</b>\n\n🆔 <b>ID:</b> <code>{user_id}</code>\n🛡 <b>Status:</b> {status}\n⚡ <b>Active Sessions:</b> {len(u.get('sessions', []))}\n📊 <b>Total DMs Sent:</b> {u.get('total_dms', 0)}"
-        await api_send(user_id, text, {"inline_keyboard": [[ibtn("Reset DM History", "reset_history", style="danger", icon=BTN_EMOJIS["cross"])]]})
-
-    elif cmd == "buypremium":
-        text = f"{E_PREM} <b>VIP Subscription Plans</b>\n\n<b>1 Day:</b> ₹{config.get('price_1d_inr')} | ${config.get('price_1d_usd')}\n<b>3 Days:</b> ₹{config.get('price_3d_inr')} | ${config.get('price_3d_usd')}\n<b>7 Days:</b> ₹{config.get('price_7d_inr')} | ${config.get('price_7d_usd')}\n<b>1 Month:</b> ₹{config.get('price_1m_inr')} | ${config.get('price_1m_usd')}\n\nSelect a plan to purchase:"
-        btn = {"inline_keyboard": [[ibtn("1 Day Plan", "plan_1", style="primary", icon=BTN_EMOJIS["diamond"]), ibtn("3 Days Plan", "plan_3", style="primary", icon=BTN_EMOJIS["diamond"])], [ibtn("7 Days Plan", "plan_7", style="success", icon=BTN_EMOJIS["diamond"]), ibtn("1 Month Plan", "plan_30", style="success", icon=BTN_EMOJIS["diamond"])]]}
-        await api_send(user_id, text, btn)
-
-    elif cmd == "massdm":
-        u = await get_user(user_id)
-        if not u.get("sessions"): return await api_send(user_id, f"❌ <b>Session Not Found!</b> Please use Menu to Add Session.")
-        USER_STATES[user_id]["state"] = "WAITING_DM_LINK"
-        await api_send(user_id, f"{E_START} <b>Start Mass DM</b>\nPlease send the Target Channel Link.")
-
-async def dm_controls(client, message):
-    user_id = str(message.chat.id); cmd = message.command[0]
-    if user_id not in ACTIVE_TASKS: return await api_send(user_id, f"❌ <b>No active Mass DM campaign found.</b>")
-    if cmd == "chk":
-        task = ACTIVE_TASKS[user_id]
-        await api_send(user_id, f"{E_STAT} <b>Campaign Status:</b> {task.get('status', 'running').title()}\n{E_TRI} <b>Target:</b> {task.get('target', 'Unknown')}\n{E_CHK} <b>Sent:</b> {task.get('sent', 0)} / {task.get('limit', 0)}")
-    elif cmd == "pause": ACTIVE_TASKS[user_id]["status"] = "paused"; await api_send(user_id, f"{E_WAIT} <b>Campaign Paused!</b>\nUse /resume to continue.")
-    elif cmd == "resume": ACTIVE_TASKS[user_id]["status"] = "running"; await api_send(user_id, f"{E_PLAY} <b>Campaign Resumed!</b>")
-    elif cmd == "stop": ACTIVE_TASKS[user_id]["status"] = "stopped"; await api_send(user_id, f"{E_STOP} <b>Campaign Stopped!</b>\nFinalizing reports...")
-
-async def check_total_public(client, message):
-    config = await settings_col.find_one({"_id": "config"})
-    await api_send(message.chat.id, f"{E_STAT} <b>Global Milestone:</b>\nTotal DMs Sent Globally: <b>{config.get('global_dms', 0)}</b>")
-
-# --- Admin Controls ---
-async def admin_panel(client, message):
-    if message.from_user.id not in ADMINS: return
-    config = await settings_col.find_one({"_id": "config"})
-    auto_status = "🟢 ON" if config.get("auto_payment_status", False) else "🔴 OFF"
-    
-    text = f"""🛠️ <b>Admin Control Panel</b>
-
-💸 <b>Current Payment Setup:</b>
-<b>Smart Auto Approve (UPI):</b> <code>{config.get('upi_fampay', 'Not Set')}</code> | Status: {auto_status}
-<b>Manual UPI:</b> <code>{config.get('upi_manual', 'Not Set')}</code>
-<b>Crypto:</b> <code>{config.get('crypto', 'Not Set')}</code>
-
-🛠️ <b>Commands Setup:</b>
-/toggleauto - Turn Auto Payment ON/OFF
-/setfampay, /setmanual [UPI_ID]
-/setcrypto [Address]
-/setfampayqr, /setmanualqr, /setcryptoqr [Reply to Photo] (Use 'none' to remove)
-/setprice1d, /setprice3d, /setprice7d, /setprice1m [INR] [USD]
-
-/ongoing - Live Task Checker
-/stats - Show stats
-/totaldms - Show Global Stats
-/sales - Revenue & Sales Tracker
-/giveprem [ID] [days] - Give premium
-/removeprem [ID] - Remove premium
-/broadcast [msg] - Broadcast
-/setfreetrial [limit] - Change Free Limit
-/setfreereq [limit] - Free users accept limit
-/setldbtime [hour] - Leaderboard auto post time (0-23)
-/setrefbonus [amount] - Set Referral Reward
-/setfreechannel [Chat_ID] [Invite_Link] - Set Free DM Channel
-/setfreerequest [Link] - Set Final Join Request Link
-/reqall [Channel_ID] [Link] - Set Mandatory Request Channel
-/maintenance [on/off] - Toggle Maintenance
-/setfsub1 to /setfsub5 [ID] [link] - Force channels
-/setleaderboard [Channel_ID]
-/setlogchannel [Channel_ID]
-/setsuccesslog [Channel_ID]
-/setdelay [Sec] - Admin Delay Controller
-/checkuser [ID] - Check User details
-/clearsession [ID] - Clear user's sessions"""
-    await api_send(message.chat.id, text)
-
-async def master_admin_cmds(client, message):
-    if message.from_user.id not in ADMINS: return
-    cmd = message.command[0]
-    
-    if cmd == "toggleauto":
-        config = await settings_col.find_one({"_id": "config"})
-        current = config.get("auto_payment_status", False)
-        await settings_col.update_one({"_id": "config"}, {"$set": {"auto_payment_status": not current}})
-        await api_send(message.chat.id, f"{E_CHK} Smart Auto Approve is now {'ON 🟢' if not current else 'OFF 🔴'}.")
-        
-    elif cmd in ["setfreerequest"]:
-        if len(message.command) < 2: return await api_send(message.chat.id, f"❌ Usage: <code>/{cmd} [Link]</code>")
-        key_map = {"setfreerequest": "free_request_link"}
-        await settings_col.update_one({"_id": "config"}, {"$set": {key_map[cmd]: message.command[1]}})
-        await api_send(message.chat.id, f"{E_CHK} {key_map[cmd]} updated.")
-        
-    elif cmd == "maintenance":
-        if len(message.command) < 2: return await api_send(message.chat.id, f"❌ Usage: <code>/maintenance [on/off]</code>")
-        val = message.command[1].lower() == "on"
-        await settings_col.update_one({"_id": "config"}, {"$set": {"maintenance": val}})
-        await api_send(message.chat.id, f"{E_CHK} Maintenance mode {'ON' if val else 'OFF'}.")
-        
-    elif cmd == "reqall":
-        if len(message.command) == 1:
-            await settings_col.update_one({"_id": "config"}, {"$set": {"reqall_id": "none"}})
-            await api_send(message.chat.id, f"{E_CHK} Mandatory Request Channel Disabled.")
-        elif len(message.command) >= 3:
-            await settings_col.update_one({"_id": "config"}, {"$set": {"reqall_id": message.command[1], "reqall_link": message.command[2]}})
-            await api_send(message.chat.id, f"{E_CHK} Mandatory Request Channel set.")
-            
-    elif cmd in ["setfampay", "setmanual", "setcrypto"]:
-        key = cmd.replace("set", "upi_") if "crypto" not in cmd else "crypto"
-        await settings_col.update_one({"_id": "config"}, {"$set": {key: message.command[1]}})
-        await api_send(message.chat.id, f"{E_CHK} Updated.")
-            
-    elif cmd in ["setprice1d", "setprice3d", "setprice7d", "setprice1m"]:
-        tk = cmd.replace("setprice", "")
-        await settings_col.update_one({"_id": "config"}, {"$set": {f"price_{tk}_inr": message.command[1], f"price_{tk}_usd": message.command[2]}})
-        await api_send(message.chat.id, f"{E_CHK} Price updated.")
-        
-    elif cmd in ["setfampayqr", "setmanualqr", "setcryptoqr"]:
-        if message.reply_to_message and message.reply_to_message.photo:
-            base_key = cmd.replace("set", "").replace("qr", "")
-            key = "qr_" + base_key
-            await settings_col.update_one({"_id": "config"}, {"$set": {key: message.reply_to_message.photo.file_id}})
-            await api_send(message.chat.id, f"{E_CHK} QR Code updated!")
-        elif len(message.command) > 1 and message.command[1].lower() == "none":
-            base_key = cmd.replace("set", "").replace("qr", "")
-            key = "qr_" + base_key
-            await settings_col.update_one({"_id": "config"}, {"$set": {key: "not_set"}})
-            await api_send(message.chat.id, f"{E_CHK} QR Code Removed Successfully!")
-        else:
-            await api_send(message.chat.id, f"⚠️ Reply to a photo to set it, or type `/{cmd} none` to remove the QR completely.")
-        
-    elif cmd.startswith("setfsub"):
-        key = cmd.replace("set", "")
-        val = "none" if len(message.command) == 1 else message.text.split(" ", 1)[1]
-        await settings_col.update_one({"_id": "config"}, {"$set": {key: val}})
-        await api_send(message.chat.id, f"{E_CHK} {key} updated.")
-        
-    elif cmd in ["setlogchannel", "setsuccesslog", "setleaderboard", "setfreechannel"]:
-        k = cmd.replace("set", "")
-        if "freechannel" in cmd: await settings_col.update_one({"_id": "config"}, {"$set": {"free_channel_id": message.command[1], "free_channel_link": message.command[2]}})
-        else: await settings_col.update_one({"_id": "config"}, {"$set": {f"{k}_channel" if "log" not in cmd else k: message.command[1]}})
-        await api_send(message.chat.id, f"{E_CHK} Updated.")
-        
-    elif cmd in ["setfreetrial", "setldbtime", "setdelay", "setfreereq", "setrefbonus"]:
-        if len(message.command) < 2: return await api_send(message.chat.id, f"❌ Usage: <code>/{cmd} [Number]</code>")
-        km = {"setfreetrial": "free_trial_limit", "setdelay": "msg_delay", "setldbtime": "ldb_time", "setfreereq": "free_req_limit", "setrefbonus": "ref_bonus"}
-        await settings_col.update_one({"_id": "config"}, {"$set": {km[cmd]: int(message.command[1])}})
-        await api_send(message.chat.id, f"{E_CHK} Updated.")
-        
-    elif cmd == "ongoing":
-        if not ACTIVE_TASKS: return await api_send(message.chat.id, "No ongoing tasks.")
-        text = f"{E_SYNC} <b>Ongoing Tasks:</b>\n"
-        for uid, t in ACTIVE_TASKS.items(): text += f"ID: <code>{uid}</code> | Target: {t['target']} | Sent: {t['sent']}/{t['limit']}\n"
-        await api_send(message.chat.id, text)
-        
-    elif cmd == "sales":
-        config = await settings_col.find_one({"_id": "config"}); history = config.get("sales_history", {})
-        t_str = get_ist_str("%Y-%m-%d"); y_str = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 86400 + 19800))
-        l_30 = sum(history.get(time.strftime("%Y-%m-%d", time.gmtime(time.time() - (i * 86400) + 19800)), 0) for i in range(30))
-        text = f"{E_MONEY} <b>Revenue Tracker</b>\n\n📅 <b>Today's Sales:</b> ₹{history.get(t_str, 0)}\n🕰 <b>Yesterday:</b> ₹{history.get(y_str, 0)}\n📆 <b>Last 30 Days:</b> ₹{l_30}\n\n🏆 <b>Total Lifetime Sales:</b> ₹{config.get('total_sales_inr', 0)}"
-        await api_send(message.chat.id, text)
-        
-    elif cmd == "giveprem":
-        t, d = message.command[1], int(message.command[2])
-        u = await get_user(t); cur = time.time()
-        nex = (u.get("premium_expiry", 0) + (d * 86400)) if u.get("premium_expiry", 0) > cur else (cur + (d * 86400))
-        await users_col.update_one({"_id": t}, {"$set": {"premium_expiry": nex}})
-        await api_send(message.chat.id, f"{E_CHK} Premium granted to {t}.")
-        
-    elif cmd == "removeprem":
-        await users_col.update_one({"_id": message.command[1]}, {"$set": {"premium_expiry": 0}})
-        await api_send(message.chat.id, f"{E_CHK} Premium removed.")
-
-async def shared_admin_cmds(client, message):
-    if message.from_user.id not in ADMINS: return
-    cmd = message.command[0]
-    
-    if cmd == "stats":
-        t_u = await users_col.count_documents({})
-        await api_send(message.chat.id, f"{E_STAT} <b>Bot Stats:</b>\nTotal Users: {t_u}")
-    elif cmd == "checkuser":
-        u = await get_user(message.command[1]); is_p = "Yes" if u.get('premium_expiry',0) > time.time() else "No"
-        await api_send(message.chat.id, f"{E_PROF} User: <code>{u['_id']}</code>\nPremium: {is_p}\nDMs Sent: {u.get('total_dms', 0)}\nSessions: {len(u.get('sessions', []))}")
-    elif cmd == "clearsession":
-        await users_col.update_one({"_id": message.command[1]}, {"$set": {"sessions": []}})
-        await api_send(message.chat.id, f"{E_CHK} Sessions Cleared.")
-    elif cmd == "banuser":
-        await users_col.update_one({"_id": message.command[1]}, {"$set": {"banned": True}})
-        await api_send(message.chat.id, f"{E_CHK} Banned.")
-    elif cmd == "unbanuser":
-        await users_col.update_one({"_id": message.command[1]}, {"$set": {"banned": False}})
-        await api_send(message.chat.id, f"{E_CHK} Unbanned.")
-    elif cmd == "broadcast":
-        if not message.reply_to_message: return await api_send(message.chat.id, f"{E_WRN} Reply to a message with `/broadcast`")
-        c = 0
-        status_msg = await api_send(message.chat.id, f"{E_SYNC} Broadcasting...")
-        async for u in users_col.find({}):
-            try: 
-                await message.reply_to_message.copy(int(u["_id"]))
-                c += 1
-                await asyncio.sleep(0.05) 
-            except: pass
-        await api_edit(status_msg.chat.id, status_msg.id, f"{E_CHK} <b>Broadcast complete!</b> Sent to {c} users.")
-
-@bot.on_callback_query()
-async def cb_handler(client, query: CallbackQuery):
-    try: await query.answer()
+        customs = cur.execute("SELECT code, name FROM custom_countries").fetchall()
+        customs.sort(key=lambda x: len(x[0]), reverse=True)
+        for code, name in customs:
+            if phone.startswith(code): return name
     except: pass
-    user_id = str(query.message.chat.id); data = query.data; config = await settings_col.find_one({"_id": "config"})
 
-    if data == "coming_soon": pass
-    
-    elif data == "check_join":
-        joined, not_joined_list = await check_force_join(user_id)
-        if not joined:
-            text = f"{E_WRN} <b>Mandatory Action Required!</b>\n\nTo ensure quality service, you must join our official channels before using the bot.\n\n<i>Note for Admin: Please make sure the bot is an Admin in the verification channels!</i>"
-            btn_list = []; row = []
-            for i, (idx, link) in enumerate(not_joined_list):
-                fixed_link = link if str(link).startswith("http") else f"https://t.me/{str(link).replace('@','')}"
-                row.append(ibtn(f"{idx}", url=fixed_link, style="primary", icon=BTN_EMOJIS["target"]))
-                if len(row) == 2: btn_list.append(row); row = []
-            if row: btn_list.append(row)
-            btn_list.append([ibtn("I Have Joined / Requested", "check_join", style="success", icon=BTN_EMOJIS["tick"])])
-            
-            try: await api_edit(user_id, query.message.id, text, {"inline_keyboard": btn_list})
-            except: pass
-            
-            return await query.answer("❌ You haven't joined all channels! Please join and click again.", show_alert=True)
-            
-        first_name = html.escape(query.from_user.first_name if query.from_user else "User")
-        text, btn = await get_home_menu(user_id, first_name, config)
-        await query.message.delete()
-        await api_send(user_id, text, kb=btn)
+    for length in (3, 2, 1):
+        prefix = phone[:length]
+        if prefix in COUNTRY_CODES: return COUNTRY_CODES[prefix]
+    return "Unknown"
 
-    elif data == "scrape_group":
-        USER_STATES[user_id] = {"state": "WAITING_SCRAPE_LINK"}
-        await safe_edit(query, f"👥 <b>Public Group Scraper</b>\n\nPlease send the Public Group Link or Username.\n<i>Example: https://t.me/PublicGroup or @PublicGroup</i>", {"inline_keyboard": [[ibtn("Cancel", "back_home", style="danger", icon=BTN_EMOJIS["cross"])]]})
-        
-    elif data == "invite_earn":
-        bot_info = await client.get_me()
-        invite_link = f"https://t.me/{bot_info.username}?start={user_id}"
-        text = f"🎁 **Invite & Earn Rewards**\n\nInvite your friends to use this bot and get rewarded when they join or purchase premium!\n\n🔗 **Your Unique Invite Link:**\n`{invite_link}`\n\n*(Note: Reward tracking logic will be enabled in the upcoming update!)*"
-        btn = {"inline_keyboard": [[ibtn("Back", "back_home", style="danger", icon=BTN_EMOJIS["cross"])]]}
-        await safe_edit(query, text, kb=btn)
-
-    elif data == "my_account":
-        has_prem = await is_premium(user_id); u = await get_user(user_id)
-        if has_prem:
-            exp_str = get_ist_ts_str(u['premium_expiry'])
-            status = f"{E_DIA} Premium\n{E_CAL} <b>Expires:</b> {exp_str}"
-        else: status = f"{E_WAIT} Free Tier"
-            
-        text = f"{E_PROF} <b>Account Details:</b>\n\n🆔 <b>ID:</b> <code>{user_id}</code>\n{E_SHD} <b>Status:</b> {status}\n{E_ACT} <b>Active Sessions:</b> {len(u.get('sessions', []))}\n{E_STAT} <b>Total DMs Sent:</b> {u.get('total_dms', 0)}"
-        btn = {"inline_keyboard": [[ibtn("Reset DM History", "reset_history", style="danger", icon=BTN_EMOJIS["cross"])], [ibtn("Back", "back_home", style="primary", icon=BTN_EMOJIS["home"])]]}
-        await safe_edit(query, text, kb=btn)
-
-    elif data == "remove_session":
-        await users_col.update_one({"_id": user_id}, {"$set": {"sessions": []}})
-        await safe_edit(query, f"{E_CHK} <b>All Active Sessions Removed Successfully!</b>", {"inline_keyboard": [[ibtn("Back", "back_home", style="primary", icon=BTN_EMOJIS["home"])]]})
-
-    elif data == "buy_premium":
-        text = f"{E_PREM} <b>VIP Subscription Plans</b>\n\n<b>1 Day:</b> ₹{config.get('price_1d_inr')} | ${config.get('price_1d_usd')}\n<b>3 Days:</b> ₹{config.get('price_3d_inr')} | ${config.get('price_3d_usd')}\n<b>7 Days:</b> ₹{config.get('price_7d_inr')} | ${config.get('price_7d_usd')}\n<b>1 Month:</b> ₹{config.get('price_1m_inr')} | ${config.get('price_1m_usd')}\n\nSelect a plan to purchase:"
-        btn = {"inline_keyboard": [[ibtn("1 Day Plan", "plan_1", style="primary", icon=BTN_EMOJIS["diamond"]), ibtn("3 Days Plan", "plan_3", style="primary", icon=BTN_EMOJIS["diamond"])], [ibtn("7 Days Plan", "plan_7", style="success", icon=BTN_EMOJIS["diamond"]), ibtn("1 Month Plan", "plan_30", style="success", icon=BTN_EMOJIS["diamond"])], [ibtn("Back", "back_home", style="danger", icon=BTN_EMOJIS["cross"])]]}
-        await safe_edit(query, text, kb=btn)
-
-    elif data.startswith("plan_"):
-        days = int(data.split("_")[1])
-        btn = {"inline_keyboard": [
-            [ibtn("Smart Auto Approve (UPI)", f"pay_fampay_{days}", style="success", icon=BTN_EMOJIS["tick"])],
-            [ibtn("Admin Approve (Manual UPI)", f"pay_manual_{days}", style="primary", icon=BTN_EMOJIS["money"])],
-            [ibtn("Crypto (USD)", f"pay_crypto_{days}", style="primary", icon=BTN_EMOJIS["diamond"])],
-            [ibtn("Back to Plans", "buy_premium", style="danger", icon=BTN_EMOJIS["cross"])]
-        ]}
-        text = f"{E_MONEY} <b>Select Payment Method for {days} Days Plan:</b>"
-        await safe_edit(query, text, kb=btn)
-
-    elif data.startswith("pay_"):
-        parts = data.split("_"); mthd = parts[1]; days = int(parts[2])
-        price_inr = config.get(f"price_{days}d_inr") if days != 30 else config.get("price_1m_inr")
-        price_usd = config.get(f"price_{days}d_usd") if days != 30 else config.get("price_1m_usd")
-        
-        if mthd == "fampay":
-            if not config.get("auto_payment_status", False):
-                return await query.answer("❌ Auto Payment is currently offline. Please use Manual payment.", show_alert=True)
-            text = f"{E_MONEY} <b>Smart Auto-Payment ({days} Days):</b>\n\n1. Send exactly <b>₹{price_inr}</b> to:\n<code>{config.get('upi_fampay', 'Not Set')}</code>\n2. Click 'I Have Paid' and submit the <b>UTR or Transaction ID</b>.\n\n<i>Bot will scan Gmail automatically.</i>"
-            btn = {"inline_keyboard": [[ibtn("I Have Paid", f"sub_fampay_{days}_{price_inr}", style="success", icon=BTN_EMOJIS["tick"])], [ibtn("Back", f"plan_{days}", style="danger", icon=BTN_EMOJIS["cross"])]]}
-            qr_photo = config.get("qr_fampay")
-        elif mthd == "crypto":
-            text = f"₿ <b>Crypto Payment ({days} Days):</b>\n\nSend exactly <b>${price_usd}</b> to (USDT.TRC20):\n<code>{config.get('crypto', 'Not Set')}</code>\n\n<i>Submit Transaction Hash for Approval.</i>"
-            btn = {"inline_keyboard": [[ibtn("I Have Paid", f"sub_man_{days}_{price_usd}", style="success", icon=BTN_EMOJIS["tick"])], [ibtn("Back", f"plan_{days}", style="danger", icon=BTN_EMOJIS["cross"])]]}
-            qr_photo = config.get("qr_crypto")
-        else: 
-            text = f"{E_MONEY} <b>Manual UPI Payment ({days} Days):</b>\n\n1. Send exactly <b>₹{price_inr}</b> to:\n<code>{config.get('upi_manual', 'Not Set')}</code>\n\n2. Click 'I Have Paid' and submit the UTR & Screenshot for Admin Approval."
-            btn = {"inline_keyboard": [[ibtn("I Have Paid", f"sub_man_{days}_{price_inr}", style="success", icon=BTN_EMOJIS["tick"])], [ibtn("Back", f"plan_{days}", style="danger", icon=BTN_EMOJIS["cross"])]]}
-            qr_photo = config.get("qr_manual")
-
-        await query.message.delete()
-        if qr_photo and str(qr_photo).lower() not in ["not_set", "none", "null"] and len(str(qr_photo)) > 5:
-            await api_send(user_id, text, kb=btn, photo=qr_photo)
-        else: 
-            await api_send(user_id, text, kb=btn)
-
-    elif data.startswith("sub_fampay_"):
-        parts = data.split("_")
-        days = int(parts[2]); price = parts[3]
-        USER_STATES[user_id] = {"state": "WAITING_FAMPAY_UTR", "days": days, "price": price}
-        await query.message.delete()
-        await api_send(user_id, f"📝 <b>Smart Auto-Verification</b>\n\nPlease send the <b>UTR Number</b> OR <b>Transaction ID</b> below.\n\n<i>Example: 312345678901 or T12345...</i>")
-
-    elif data.startswith("sub_man_"):
-        parts = data.split("_")
-        days = int(parts[2]); price = parts[3]
-        USER_STATES[user_id] = {"state": "WAITING_MANUAL_UTR", "days": days, "price": price}
-        await query.message.delete()
-        await api_send(user_id, f"📝 <b>Manual Verification (Step 1/2)</b>\n\nPlease send your <b>UTR / Transaction Hash</b> first.")
-
-    elif data == "add_session":
-        USER_STATES[user_id] = {"state": "WAITING_PHONE"}
-        text = f"{E_WAIT} <b>Session Generator</b>\nPlease enter your Telegram Phone Number with country code.\nExample: <code>+919876543210</code>"
-        await safe_edit(query, text, {"inline_keyboard": [[ibtn("Cancel", "back_home", style="danger", icon=BTN_EMOJIS["cross"])]]})
-
-    elif data == "start_dm":
-        u = await get_user(user_id)
-        if not u.get("sessions"): return await safe_edit(query, f"{E_WRN} <b>Session Not Found!</b>", {"inline_keyboard": [[ibtn("ADD SESSION", "add_session", style="success", icon=BTN_EMOJIS["add"])], [ibtn("Back", "back_home", style="danger", icon=BTN_EMOJIS["cross"])]]})
-        has_prem = await is_premium(user_id)
-        rem_free = max(0, int(config.get("free_trial_limit", 100)) + int(u.get("bonus_dms", 0)) - int(u.get("total_dms", 0)))
-        if not has_prem and rem_free <= 0: return await safe_edit(query, f"{E_WRN} <b>Limit Reached!</b>\nYour Free DMs are over. Please buy Premium.", {"inline_keyboard": [[ibtn("BUY PREMIUM", "buy_premium", style="success", icon=BTN_EMOJIS["diamond"])], [ibtn("Back", "back_home", style="danger", icon=BTN_EMOJIS["cross"])]]})
-            
-        custom_msg_type = u.get("custom_msg_type", "text")
-        if custom_msg_type == "photo": msg_disp = "[Photo Message]"
-        elif custom_msg_type == "forward_link": msg_disp = f"[Forward Link] {u.get('custom_msg')}"
-        else: msg_disp = html.escape(u.get("custom_msg", "HELLO"))
-        
-        text = f"{E_PLAY} <b>Mass DM Control Panel</b>\n\n💬 <b>Current Message:</b>\n<code>{msg_disp}</code>\n\nSelect your target channel or change your message below."
-        btn = {"inline_keyboard": [
-            [ibtn("Target Channel (Join Req)", "tgt_own", style="primary", icon=BTN_EMOJIS["target"]), ibtn("Target Alt Account DMs", "tgt_alt_dms", style="success", icon=BTN_EMOJIS["user"])], 
-            [ibtn("Target Admin's Free Channel", "tgt_free", style="primary", icon=BTN_EMOJIS["target"])], 
-            [ibtn("Set Text/Photo", "set_msg", style="danger", icon=BTN_EMOJIS["setting"]), ibtn("Set Universal Msg", "set_fwd_msg", style="danger", icon=BTN_EMOJIS["globe"])], 
-            [ibtn("Back to Main Menu", "back_home", style="secondary", icon=BTN_EMOJIS["home"])]
-        ]}
-        await safe_edit(query, text, btn)
-
-    elif data == "set_msg":
-        USER_STATES[user_id] = {"state": "WAITING_CUSTOM_MSG"}
-        await safe_edit(query, "💬 <b>Set Custom DM Message</b>\n\nPlease send the <b>Text</b> OR a <b>Photo with Caption</b>.", {"inline_keyboard": [[ibtn("Cancel", "start_dm", style="danger", icon=BTN_EMOJIS["cross"])]]})
-
-    elif data == "set_fwd_msg":
-        USER_STATES[user_id] = {"state": "WAITING_FWD_LINK"}
-        prompt = f"🔗 <b>Set Forward Message or Text</b>\n\nYou can now do ANY of the following:\n\n1️⃣ Send a <b>Public Post Link</b> (e.g. <code>https://t.me/Channel/123</code>)\n2️⃣ <b>Forward a post</b> directly from a public channel here.\n3️⃣ Simply <b>Type a text</b> (like 'Hello') or send a <b>Photo</b>.\n\n<i>Whatever you send here will be saved and sent to the target users!</i>"
-        await safe_edit(query, prompt, {"inline_keyboard": [[ibtn("Cancel", "start_dm", style="danger", icon=BTN_EMOJIS["cross"])]]})
-
-    elif data == "tgt_own":
-        u = await get_user(user_id); saved_channels = u.get("saved_channels", []); text = "📂 <b>Target Channel Selection</b>\n\nSelect a previously used channel from the list below, or add a new one."
-        btns = []
-        for i, ch in enumerate(saved_channels):
-            title = ch.get("title", "Saved Channel")[:25] + ".." if len(ch.get("title", "")) > 25 else ch.get("title", "Saved Channel")
-            btns.append([ibtn(f"{title}", f"usech_{i}", style="primary", icon=BTN_EMOJIS["globe"])])
-        btns.append([ibtn("Add New Target Channel", "add_new_ch", style="success", icon=BTN_EMOJIS["add"])])
-        if saved_channels: btns.append([ibtn("Clear Saved Channels", "clear_saved_ch", style="danger", icon=BTN_EMOJIS["cross"])])
-        btns.append([ibtn("Back", "start_dm", style="secondary", icon=BTN_EMOJIS["home"])])
-        await safe_edit(query, text, {"inline_keyboard": btns})
-
-    elif data == "clear_saved_ch":
-        await users_col.update_one({"_id": user_id}, {"$set": {"saved_channels": []}})
-        await safe_edit(query, "📂 <b>Target Channel Selection</b>\n\nSelect a previously used channel from the list below, or add a new one.", {"inline_keyboard": [[ibtn("Add New Target Channel", "add_new_ch", style="success", icon=BTN_EMOJIS["add"])], [ibtn("Back", "start_dm", style="secondary", icon=BTN_EMOJIS["home"])]]})
-
-    elif data == "add_new_ch":
-        USER_STATES[user_id] = {"state": "WAITING_LINK", "is_free_ch": False}
-        await safe_edit(query, "👉 <b>Please send your Target Channel Link. Example: https://t.me/+ToF244rLvmQ5YWVl</b>", {"inline_keyboard": [[ibtn("Cancel", "tgt_own", style="danger", icon=BTN_EMOJIS["cross"])]]})
-
-    elif data == "tgt_alt_dms":
-        u = await get_user(user_id)
-        sessions = u.get('sessions', [])
-        
-        USER_STATES[user_id] = {"is_free_ch": False, "link": "ALT_DMS", "raw_link": "ALT_DMS"}
-        
-        if len(sessions) <= 1:
-            USER_STATES[user_id]["sess_idx"] = "all"
-            USER_STATES[user_id]["state"] = "WAITING_LIMIT"
-            await safe_edit(query, "🔢 <b>How many DMs do you want to send?</b>\n(Send a number)", {"inline_keyboard": [[ibtn("Cancel", "start_dm", style="danger", icon=BTN_EMOJIS["cross"])]]})
-        else:
-            text = f"{E_SYNC} <b>Multiple Sessions Detected!</b>\nWhich account's DMs do you want to target?"
-            btns = [[ibtn(f"Account {i+1}", f"selsess_{i}", style="primary", icon=BTN_EMOJIS["user"])] for i in range(len(sessions))]
-            btns.append([ibtn("Use All Accounts", "selsess_all", style="success", icon=BTN_EMOJIS["tick"])])
-            btns.append([ibtn("Cancel", "start_dm", style="danger", icon=BTN_EMOJIS["cross"])])
-            await safe_edit(query, text, {"inline_keyboard": btns})
-
-    elif data.startswith("usech_"):
-        u = await get_user(user_id); idx = int(data.split("_")[1]); saved_channels = u.get("saved_channels", [])
-        if idx < len(saved_channels):
-            USER_STATES[user_id] = {"is_free_ch": False}
-            msg = await api_send(user_id, f"{E_SYNC} <b>Checking Channel & Tracking Requests...</b>")
-            asyncio.create_task(check_and_show_stats(client, user_id, u, config, saved_channels[idx].get("link") or saved_channels[idx]["id"], msg, save_new=False))
-
-    elif data == "tgt_free":
-        u = await get_user(user_id)
-        if config.get("free_channel_id", "none") == "none": return await query.answer("Admin hasn't setup a Free Channel yet!", show_alert=True)
-        USER_STATES[user_id] = {"is_free_ch": True}
-        msg = await api_send(user_id, f"{E_SYNC} <b>Checking Channel & Tracking Requests...</b>")
-        asyncio.create_task(check_and_show_stats(client, user_id, u, config, config.get("free_channel_link"), msg, save_new=False))
-
-    elif data.startswith("selsess_"):
-        USER_STATES[user_id]["sess_idx"] = data.split("_")[1]
-        USER_STATES[user_id]["state"] = "WAITING_LIMIT"
-        await safe_edit(query, "🔢 <b>How many DMs do you want to send?</b>\n(Send a number)", {"inline_keyboard": [[ibtn("Cancel", "start_dm", style="danger", icon=BTN_EMOJIS["cross"])]]})
-
-    elif data.startswith("flt_"):
-        USER_STATES[user_id]["filter"] = data
-        btn = {"inline_keyboard": [[ibtn("Start Now", "sch_0", style="success", icon=BTN_EMOJIS["start"])], [ibtn("In 30 Mins", "sch_30", style="primary", icon=BTN_EMOJIS["start"])], [ibtn("In 1 Hour", "sch_60", style="primary", icon=BTN_EMOJIS["start"])], [ibtn("Cancel", "start_dm", style="danger", icon=BTN_EMOJIS["cross"])]]}
-        await safe_edit(query, f"{E_CAL} <b>Schedule Campaign:</b>\n\nWhen should the bot start sending the messages?", btn)
-
-    elif data.startswith("sch_"):
-        delay = int(data.split("_")[1])
-        u_state = USER_STATES.get(user_id, {})
-        if not u_state:
-            return await api_send(user_id, f"{E_WRN} <b>Setup Session Expired!</b> Please click 'Start Mass DM' again.")
-            
-        asyncio.create_task(setup_and_execute_dm(
-            user_id, 
-            u_state.get("limit", 0), 
-            u_state.get("filter", "flt_all"), 
-            delay,
-            u_state.get("is_free_ch", False), 
-            u_state.get("link"), 
-            u_state.get("raw_link"), 
-            u_state.get("sess_idx", "all"), 
-            client
-        ))
-        USER_STATES.pop(user_id, None)
-        await safe_edit(query, f"{E_CHK} <b>Campaign Setup Complete!</b>\nThe bot will handle the rest in the background. Use /chk to see live progress.")
-
-    elif data == "how_to_use":
-        text = f"📖 <b>Tutorial & Terms</b>\n\n1. Add Session via main menu.\n2. Ensure your alt account is Admin in target channels.\n3. Click 'Start Mass DM'.\n\nWe hold zero liability for bans. All VIP payments are final."
-        await safe_edit(query, text, {"inline_keyboard": [[ibtn("Back", "back_home", style="primary", icon=BTN_EMOJIS["home"])]]})
-
-    elif data == "back_home":
-        first_name = html.escape(query.from_user.first_name if query.from_user else "User")
-        text, btn = await get_home_menu(user_id, first_name, config)
-        await safe_edit(query, text, kb=btn)
-
-async def admin_manual_approve(client, query):
-    if query.from_user.id not in ADMINS: return
-    action, target, days = query.data.split("_")[0:3]; days = int(days)
-    
-    if action == "manapp":
-        u = await get_user(target); current_time = time.time()
-        nex = max(current_time, u.get("premium_expiry", 0)) + (days * 86400)
-        await users_col.update_one({"_id": target}, {"$set": {"premium_expiry": nex}})
-        exp_str = get_ist_ts_str(nex)
-        try: await api_send(target, f"{E_DIA} <b>Admin Approved your payment! ({days} Days)</b>\n\n🎉 <b>Your Premium is active until:</b>\n{E_CAL} <b>{exp_str}</b>")
+async def detect_account_year(client):
+    year = 2024
+    try:
+        try: await client.delete_dialog('TGDNAbot')
         except: pass
-        
-        payload = {"chat_id": query.message.chat.id, "message_id": query.message.id, "caption": query.message.caption + f"\n\n✅ <b>APPROVED BY ADMIN</b>", "parse_mode": "HTML"}
-        async with aiohttp.ClientSession() as session:
-            await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageCaption", json=payload)
+        await client.send_message('TGDNAbot', '/start')
+        me = await client.get_me()
+        await asyncio.sleep(1)
+        await client.send_message('TGDNAbot', str(me.id)) 
+        for _ in range(8):
+            await asyncio.sleep(1.5)
+            msgs = await client.get_messages('TGDNAbot', limit=3)
+            for m in msgs:
+                if m.text and ('Created:' in m.text or 'Age:' in m.text or 'Registration' in m.text):
+                    match = re.search(r'(?:Created|Age|Registration)[^\d]*(\d{4})', m.text, re.IGNORECASE)
+                    if match: return int(match.group(1))
+    except Exception: pass
+    return year
+
+# ================= LOGGING LOGIC =================
+async def process_referral_bonus(uid, amount):
+    row = cur.execute("SELECT referred_by FROM users WHERE user_id=?", (uid,)).fetchone()
+    ref = row[0] if row else None
+    if ref:
+        pct_row = cur.execute("SELECT value FROM settings WHERE key='ref_percent'").fetchone()
+        pct = float(pct_row[0]) if pct_row else 3.0
+        if pct > 0:
+            bonus = int(amount * (pct / 100))
+            if bonus > 0:
+                update_balance(ref, bonus)
+                try: 
+                    await bot.send_message(ref, f"{P_GIFT} <b>Referral Bonus!</b>\nYour referral <code>{uid}</code> deposited {P_INR}{amount}.\n{P_YES} You earned <b>{P_INR}{bonus}</b>!")
+                except: pass
+
+async def log_primary_deposit(uid, amt, method):
+    try:
+        try:
+            user = await bot.get_entity(int(uid))
+            username = html.escape(user.username) if user and user.username else "NoUsername"
+        except:
+            username = "NoUsername"
+        t = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        msg = (f"{P_YES} <b>NEW DEPOSIT SUCCESSFUL</b>\n\n"
+               f"{P_ACC} User ID: <code>{uid}</code>\n"
+               f"{P_ACC} Username: @{username}\n"
+               f"{P_MONEY} Amount: {P_INR}{amt}\n"
+               f"{P_CARD} Method: {html.escape(str(method))}\n"
+               f"{P_TIME} Time: {t}\n\n"
+               f"<i>{P_STAR} Thanks For Deposit In Fresh TG! {P_STAR}</i>")
+        try: await bot.send_message(LOG_CHANNEL_ID, msg)
+        except Exception as e: logger.error(f"Failed Log: {e}")
+    except Exception as e: logger.error(f"Global Dep Log Err: {e}")
+
+async def log_primary_purchase(uid, country, price, amount, year, qty):
+    try:
+        t = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        country_clean = html.escape(str(country))
+        msg = (f"{P_CART} <b>NEW PURCHASE SUCCESSFUL</b>\n\n"
+               f"{P_ID} User ID: <code>{uid}</code>\n"
+               f"{P_GLOBE} Country: {country_clean}\n"
+               f"{P_MONEY} Price: {P_INR}{price}\n"
+               f"{P_CARD} Total Paid: {P_INR}{amount}\n"
+               f"{P_CAL} Year: {year}\n"
+               f"{P_PKG} Quantity: {qty}\n"
+               f"{P_TIME} Time: {t}")
+        try: await bot.send_message(LOG_CHANNEL_ID, msg)
+        except: pass
+    except Exception as e: logger.error(f"Pur Log Err: {e}")
+
+# ================= MENU HELPERS =================
+def get_persistent_menu(uid):
+    rows = [
+        [Button.text("Buy Account", style="danger", icon_custom_emoji_id=5780824606579364273, resize=True)],
+        [
+            Button.text("Buy Sessions", style="success", icon_custom_emoji_id=6269214795325510848), 
+            Button.text("Deposit", style="success", icon_custom_emoji_id=6267068789146260253)
+        ],
+        [
+            Button.text("My Profile", style="primary", icon_custom_emoji_id=6282567341842633593), 
+            Button.text("My Stats", style="primary", icon_custom_emoji_id=6033118016407868078)
+        ],
+        [Button.text("Support", style="success", icon_custom_emoji_id=6266794310671275367)]
+    ]
+    if is_admin(uid): 
+        rows.append([Button.text("Admin Panel", style="danger", icon_custom_emoji_id=5769547529993588669)])
+    return rows
+
+async def send_main_menu(event, uid):
+    me = await bot.get_me()
+    pct_row = cur.execute("SELECT value FROM settings WHERE key='ref_percent'").fetchone()
+    pct = pct_row[0] if pct_row else "3"
+    msg = (f"{P_CROWN} <b>Welcome to TG ACC STORE!</b>\n\n"
+           f"{P_GIFT} <b>Refer & Earn:</b>\nInvite friends and earn {pct}% of their deposits!\n"
+           f"{P_GLOBE} <code>https://t.me/{me.username}?start=ref_{uid}</code>")
+    
+    if isinstance(event, events.CallbackQuery.Event):
+        try: await event.delete()
+        except: pass
+        await bot.send_message(uid, msg, buttons=get_persistent_menu(uid))
     else:
-        payload = {"chat_id": query.message.chat.id, "message_id": query.message.id, "caption": query.message.caption + f"\n\n❌ <b>REJECTED BY ADMIN</b>", "parse_mode": "HTML"}
-        async with aiohttp.ClientSession() as session:
-            await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageCaption", json=payload)
-        try: await api_send(target, f"{E_WRN} <b>Payment Rejected by Admin.</b> Contact support if money was deducted.")
+        await event.respond(msg, buttons=get_persistent_menu(uid))
+
+# ================= DEPOSIT HANDLERS =================
+def format_payment_buttons(buttons):
+    n = len(buttons)
+    res = []
+    for i in range(0, n, 2): res.append(buttons[i:i+2])
+    return res
+
+async def deposit_menu(event):
+    msg = f"{P_CARD} <b>Select Payment Method:</b>\n\nChoose any payment method below to load funds."
+    flat_buttons = []
+    customs = cur.execute("SELECT name FROM custom_payments").fetchall()
+    for c in customs:
+        flat_buttons.append(Button.inline(f"{c[0]}", f"depm_{c[0]}", style="primary", icon_custom_emoji_id=6028517788606272241))
+    
+    if not flat_buttons:
+        msg += f"\n\n{P_WARN} No active payment methods found at the moment."
+    
+    btns = format_payment_buttons(flat_buttons)
+    await bot.send_message(event.chat_id, msg, buttons=btns)
+
+def get_admin_custom_keypad(dep_id):
+    return [
+        [Button.inline("1", f"dkp|{dep_id}|1", style="primary"), Button.inline("2", f"dkp|{dep_id}|2", style="primary"), Button.inline("3", f"dkp|{dep_id}|3", style="primary")],
+        [Button.inline("4", f"dkp|{dep_id}|4", style="primary"), Button.inline("5", f"dkp|{dep_id}|5", style="primary"), Button.inline("6", f"dkp|{dep_id}|6", style="primary")],
+        [Button.inline("7", f"dkp|{dep_id}|7", style="primary"), Button.inline("8", f"dkp|{dep_id}|8", style="primary"), Button.inline("9", f"dkp|{dep_id}|9", style="primary")],
+        [Button.inline("Del", f"dkp|{dep_id}|del", style="danger"), Button.inline("0", f"dkp|{dep_id}|0", style="primary"), Button.inline("Confirm", f"dkp|{dep_id}|conf", style="success", icon_custom_emoji_id=6267008582294705964)],
+        [Button.inline("Cancel", f"dkp|{dep_id}|cancel", style="danger", icon_custom_emoji_id=5785177332595561481)]
+    ]
+
+async def manual_deposit_init(event, method):
+    uid = event.sender_id
+    deposit_input[uid] = {'step': 'wait_amt', 'method': method}
+    await event.edit(f"{P_CARD} <b>{html.escape(method)} Deposit</b>\n\nReply to this message with the <b>AMOUNT</b> in INR (₹) you want to deposit.", buttons=[[Button.inline("Cancel", "cancel_action", style="danger", icon_custom_emoji_id=5785177332595561481)]])
+
+# ================= BUYING FLOW =================
+async def show_countries(event, flow, page=1):
+    limit = 10
+    offset = (page - 1) * limit
+    
+    total_row = cur.execute("SELECT COUNT(DISTINCT country_name) FROM stock WHERE available=1").fetchone()
+    total = total_row[0] if total_row else 0
+    rows = cur.execute("SELECT country_name, COUNT(*) FROM stock WHERE available=1 GROUP BY country_name ORDER BY country_name ASC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+        
+    if not rows and page == 1: 
+        err_msg = f"{P_NO} <b>Stock is Empty right now. Check back later!</b>"
+        if isinstance(event, events.CallbackQuery.Event): return await event.edit(err_msg)
+        else: return await event.respond(err_msg)
+    
+    title = f"{P_STORE} <b>Bulk Sessions Menu</b>" if flow == 'bulk' else f"{P_CART} <b>Single Account Menu</b>"
+    msg = f"{title}\n\n{P_GLOBE} <b>Select a Region below to view available numbers (Page {page}).</b>\n{P_USDT} Rate: 1 USDT = {P_INR}{get_usdt_rate()}\n\n"
+    
+    btns = []
+    for (n, c) in rows:
+        btns.append([Button.inline(f"{n} ({c})", f"bc|{flow}|{n[:20]}", style="primary", icon_custom_emoji_id=5967276872134824140)])
+
+    nav = []
+    if page > 1: nav.append(Button.inline("Prev", f"pg_c|{flow}|{page-1}", style="primary"))
+    if offset + limit < total: nav.append(Button.inline("Next", f"pg_c|{flow}|{page+1}", style="primary"))
+    if nav: btns.append(nav)
+    btns.append([Button.inline("Cancel", "cancel_action", style="danger", icon_custom_emoji_id=5785177332595561481)])
+    
+    if isinstance(event, events.CallbackQuery.Event): await event.edit(msg, buttons=btns)
+    else: await event.respond(msg, buttons=btns)
+
+async def show_years(event, flow, country):
+    rows = cur.execute("SELECT account_year, price, COUNT(*) FROM stock WHERE available=1 AND country_name LIKE ? GROUP BY account_year, price ORDER BY account_year DESC", (f"{country}%",)).fetchall()
+    if not rows: return await event.answer("Out of stock for this country.", alert=True)
+
+    uid = event.sender_id
+    disc_row = cur.execute("SELECT discount FROM users WHERE user_id=?", (uid,)).fetchone()
+    discount = disc_row[0] if disc_row else 0
+
+    msg = f"{P_CAL} <b>Select Account Year</b>\n{P_GLOBE} Country: <b>{html.escape(country)}</b>\n\n"
+    btns = []
+    
+    for (y, p, c) in rows:
+        disp_p = p if discount == 0 else int(p * (100 - discount) / 100)
+        disc_text = f" (-{discount}%)" if discount > 0 else ""
+        btns.append([Button.inline(f"{y} | ₹{disp_p}{disc_text} | Stock: {c}", f"by|{flow}|{country}|{y}|{p}", style="success", icon_custom_emoji_id=6266947228686892459)])
+
+    btns.append([Button.inline("Back to Countries", f"pg_c|{flow}|1", style="danger")])
+    await event.edit(msg, buttons=btns)
+
+async def confirm_purchase(event, country, year, price_str):
+    uid = event.sender_id
+    base_price = int(price_str)
+    
+    bal_row = cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
+    bal = bal_row[0] if bal_row else 0
+    disc_row = cur.execute("SELECT discount FROM users WHERE user_id=?", (uid,)).fetchone()
+    discount = disc_row[0] if disc_row else 0
+    final_price = base_price if discount == 0 else int(base_price * (100 - discount) / 100)
+
+    msg = (f"{P_CART} <b>Confirm Your Purchase</b>\n\n"
+           f"{P_FLAG} <b>Country:</b> {html.escape(country)}\n"
+           f"{P_CAL} <b>Year:</b> {year}\n"
+           f"{P_MONEY} <b>Final Price:</b> {P_INR}{final_price}\n\n"
+           f"{P_CARD} <b>Your Balance:</b> {P_INR}{bal}\n\n"
+           f"Do you want to proceed with this purchase?")
+    
+    btns = [
+        [Button.inline("Yes, Buy Now", f"buy_cf|{country}|{year}|{base_price}", style="success", icon_custom_emoji_id=6267008582294705964)],
+        [Button.inline("No, Cancel", "cancel_action", style="danger", icon_custom_emoji_id=5785177332595561481)]
+    ]
+    await event.edit(msg, buttons=btns)
+
+async def process_purchase(event, country, year_str, price_str):
+    uid, base_price = event.sender_id, int(price_str)
+
+    disc_row = cur.execute("SELECT discount FROM users WHERE user_id=?", (uid,)).fetchone()
+    discount = disc_row[0] if disc_row else 0
+    final_price = base_price if discount == 0 else int(base_price * (100 - discount) / 100)
+
+    async with get_user_lock(uid):
+        row = cur.execute("SELECT phone, session_file, account_year, twofa FROM stock WHERE country_name LIKE ? AND account_year=? AND price=? AND available=1 LIMIT 1", (f"{country}%", int(year_str), base_price)).fetchone()
+
+        if not row:
+            return await event.answer("Sold out! Another user just bought this account.", alert=True)
+        
+        phone, sess, actual_year, twofa_pass = row
+
+        cur.execute("UPDATE users SET balance = balance - ? WHERE user_id=? AND balance >= ?", (final_price, uid, final_price))
+        if cur.rowcount == 0:
+            return await event.answer(f"Insufficient Balance! Need ₹{final_price}", alert=True)
+
+        cur.execute("UPDATE stock SET available=0 WHERE phone=?", (phone,))
+        db.commit()
+
+    await event.edit(f"{P_WAIT} <b>Fetching Number (+{phone})...</b>")
+    clean_sess = sess if not sess.endswith(".session") else sess[:-8]
+    client = TelegramClient(clean_sess, API_ID, API_HASH)
+    
+    try:
+        await client.connect()
+        if not await client.is_user_authorized(): raise Exception("Session dead")
+    except Exception:
+        async with get_user_lock(uid):
+            cur.execute("DELETE FROM stock WHERE phone=?", (phone,))
+            cur.execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (final_price, uid))
+            db.commit()
+        await client.disconnect()
+        delete_session_files(sess)
+        return await event.edit(f"{P_NO} <b>Account Invalid.</b> Money refunded. Try buying another.")
+
+    msg = (f"{P_YES} <b>Order Active!</b>\n\n"
+           f"{P_PHONE} <b>Phone:</b> <code>{phone}</code>\n"
+           f"{P_FLAG} <b>Country:</b> {html.escape(country)}\n\n"
+           f"{P_STAR} <b>INSTRUCTIONS:</b>\n"
+           f"1. Open Telegram & Add Account\n"
+           f"2. Enter the number above.\n"
+           f"3. {P_WAIT} <b>Please wait!</b> The bot is actively listening for your OTP and will send it automatically.\n\n"
+           f"<i>{P_WARN} Note: If no OTP is received within 10 minutes, the bot will auto-cancel and refund your balance automatically.</i>")
+    
+    sent_msg = await event.edit(msg)
+    
+    active_orders[phone] = {
+        'uid': uid,
+        'client': client, 'sess': sess, 'start_time': time.time(), 
+        'paid': False, 'price': final_price, 'country': country, 'year': actual_year, 
+        'twofa': twofa_pass, 'msg_id': sent_msg.id
+    }
+    asyncio.create_task(auto_otp_task(phone))
+
+async def auto_otp_task(phone):
+    if phone not in active_orders: return
+    
+    order = active_orders[phone]
+    client = order['client']
+    start_time = order['start_time']
+    uid = order['uid']
+    msg_id = order['msg_id']
+    
+    while time.time() - start_time < AUTO_CANCEL_SECONDS:
+        if phone not in active_orders: return 
+        try:
+            msgs = await client.get_messages(777000, limit=5)
+            code = None
+            for m in msgs:
+                if m.date.timestamp() > start_time - 10: 
+                    if m.message and re.search(OTP_REGEX, m.message) and "Login detected" not in m.message:
+                        code = re.search(OTP_REGEX, m.message).group()
+                        break
+            
+            if code:
+                if not order['paid']:
+                    order['paid'] = True
+                    async with get_user_lock(uid):
+                        cur.execute("INSERT INTO orders (user_id, country, year, price, phone, otp) VALUES (?,?,?,?,?,?)", (uid, order['country'], order['year'], order['price'], phone, code))
+                        cur.execute("DELETE FROM stock WHERE phone=?", (phone,))
+                        db.commit()
+                    
+                    await log_primary_purchase(uid, order['country'], order['price'], order['price'], order['year'], 1)
+                
+                twofa_text = f"{P_2FA} <b>2FA:</b> <code>{html.escape(order['twofa'])}</code>" if order['twofa'] != "None" else f"{P_2FA} <b>2FA:</b> <code>Disabled (No Password)</code>"
+                msg_text = (f"{P_YES} <b>Latest OTP Fetched!</b>\n\n"
+                            f"{P_PHONE} <b>Phone:</b> <code>{phone}</code>\n"
+                            f"{P_FLAG} <b>Country:</b> {html.escape(order['country'])}\n"
+                            f"{P_OTP} <b>OTP:</b> <code>{code}</code>\n"
+                            f"{twofa_text}")
+                
+                btns = [
+                    [Button.inline("Get OTP Again", f"get_otp_again|{phone}", style="primary", icon_custom_emoji_id=6035353718684129368)],
+                    [Button.inline("Finish & Logout", f"logout_bot|{phone}", style="danger", icon_custom_emoji_id=6267262260243076354)]
+                ]
+                try: 
+                    await bot.edit_message(uid, msg_id, msg_text, buttons=btns)
+                except MessageNotModifiedError: pass
+                except Exception: 
+                    await bot.send_message(uid, msg_text, buttons=btns)
+                return 
+        except Exception: pass
+        await asyncio.sleep(6) 
+        
+    if phone in active_orders and not active_orders[phone]['paid']:
+        order = active_orders.pop(phone)
+        try: await order['client'].disconnect()
+        except: pass
+        
+        async with get_user_lock(uid):
+            cur.execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (order['price'], uid))
+            cur.execute("UPDATE stock SET available=1 WHERE phone=?", (phone,))
+            db.commit()
+            
+        try: 
+            await bot.edit_message(uid, msg_id, f"{P_TIME} <b>Order Expired!</b>\nThe 10-minute limit for <code>{phone}</code> ran out. Your money ({P_INR}{order['price']}) has been automatically refunded.")
         except: pass
 
-async def handle_states(client, message):
-    if not message.text and not message.photo: return
-    if message.text and message.text.startswith("/"):
-        user_id = str(message.chat.id)
-        if user_id in USER_STATES: USER_STATES.pop(user_id, None)
+async def init_session_purchase(event, country, year, price_str):
+    uid, price = event.sender_id, int(price_str)
+    stock_row = cur.execute("SELECT COUNT(*) FROM stock WHERE country_name LIKE ? AND account_year=? AND price=? AND available=1", (f"{country}%", int(year), price)).fetchone()
+    stock = stock_row[0] if stock_row else 0
+    if stock == 0: return await event.answer("Out of stock!", alert=True)
+    
+    session_buy_state[uid] = {'country': country, 'year': year, 'price': price, 'stock': stock}
+    disc_row = cur.execute("SELECT discount FROM users WHERE user_id=?", (uid,)).fetchone()
+    discount = disc_row[0] if disc_row else 0
+    p_disp = price if discount == 0 else int(price * (100 - discount) / 100)
+    
+    msg = (f"{P_STORE} <b>Buy {html.escape(country)} ({year}) Sessions</b>\n\n"
+           f"{P_MONEY} <b>Price per session:</b> {P_INR}{p_disp}\n"
+           f"{P_PKG} <b>Available Stock:</b> {stock}\n\n"
+           f"Reply to this message with the <b>Number of Sessions</b> you want to buy.")
+    await event.edit(msg, buttons=[[Button.inline("Cancel", "cancel_action", style="danger", icon_custom_emoji_id=5785177332595561481)]])
+
+async def process_bulk_sessions(event, uid, qty, state, final_cost):
+    country, year, price = state['country'], int(state['year']), int(state['price'])
+    await event.respond(f"{P_WAIT} <b>Processing your sessions...</b>")
+
+    async with get_user_lock(uid):
+        rows = cur.execute("SELECT phone, session_file, twofa, account_year FROM stock WHERE country_name LIKE ? AND account_year=? AND price=? AND available=1 LIMIT ?", (f"{country}%", year, price, qty)).fetchall()
+        if len(rows) < qty:
+            return await event.respond(f"{P_NO} Stock changed during processing. Purchase Cancelled.")
+        
+        cur.execute("UPDATE users SET balance = balance - ? WHERE user_id=? AND balance >= ?", (final_cost, uid, final_cost))
+        if cur.rowcount == 0:
+            return await event.respond(f"{P_NO} Insufficient Balance! Purchase Cancelled.")
+
+        phones = [r[0] for r in rows]
+        placeholders = ",".join("?" for _ in phones)
+        cur.execute(f"UPDATE stock SET available=0 WHERE phone IN ({placeholders})", phones)
+        
+        price_per_acc = final_cost // qty
+        for p in phones:
+            cur.execute("INSERT INTO orders (user_id, country, price, phone, otp) VALUES (?,?,?,?,?)", (uid, country, price_per_acc, p, "SESSION_FILES"))
+        db.commit()
+
+    zip_name = f"sessions_{uid}_{int(time.time())}.zip"
+    numbers_txt = ""
+
+    try:
+        with zipfile.ZipFile(zip_name, 'w') as zf:
+            for phone, sess_file, twofa_pass, y in rows:
+                base_s = sess_file if not sess_file.endswith(".session") else sess_file[:-8]
+                for ext in ['.session', '.session-wal', '.session-shm', '.session-journal']:
+                    src = base_s + ext
+                    if os.path.exists(src): zf.write(src, os.path.basename(src))
+                
+                pass_text = twofa_pass if twofa_pass != "None" else "No_Password"
+                numbers_txt += f"+{phone} | pass:{pass_text}\n"
+            
+            numbers_txt += "\n\nPurchased from @Freshtgsales\n"
+            zf.writestr("numbers.txt", numbers_txt)
+            
+        caption = f"{P_YES} <b>Bulk Purchase Successful!</b>\n\n{P_FLAG} Country: {html.escape(country)}\n{P_PKG} Quantity: {qty}\n{P_CARD} Total Paid: {P_INR}{final_cost}\n\n<i>(Note: Sessions are safely provided, the bot does not keep them active)</i>"
+        await bot.send_file(uid, zip_name, caption=caption)
+        await log_primary_purchase(uid, country, price, final_cost, year, qty)
+    except Exception as e: await event.respond(f"{P_WARN} Error creating zip: {e}")
+    finally:
+        if os.path.exists(zip_name): os.remove(zip_name)
+
+# ================= STATS & PROFILE FUNCTIONS =================
+async def profile_handler(event):
+    uid = event.sender_id
+    row = cur.execute("SELECT balance, total_deposited, joined_date, discount FROM users WHERE user_id=?", (uid,)).fetchone()
+    if not row: return await bot.send_message(event.chat_id, f"{P_WARN} Error: Please type /start to initialize your account.")
+    
+    bal, dep, date, discount = row
+    me = await bot.get_me()
+    ref_link = f"https://t.me/{me.username}?start=ref_{uid}"
+    disc_msg = f"\n{P_GIFT} Active Discount: <b>{discount}% OFF</b>" if discount > 0 else ""
+    
+    msg = (f"{P_ACC} <b>USER PROFILE</b>\n\n"
+           f"{P_ID} User ID: <code>{uid}</code>\n"
+           f"{P_MONEY} Balance: <code>${to_usd(bal):.2f} ({P_INR}{bal})</code>\n"
+           f"{P_CARD} Deposited: <code>${to_usd(dep):.2f} ({P_INR}{dep})</code>{disc_msg}\n"
+           f"{P_CAL} Joined: {date[:10]}\n\n"
+           f"{P_USERS} <b>Your Referral Link:</b>\n<code>{ref_link}</code>\n\n"
+           f"<i>({P_STAR} Share this link with your friends to earn bonuses!)</i>")
+    await bot.send_message(event.chat_id, msg)
+
+async def stats_handler(event, is_callback=False):
+    uid = event.sender_id
+    row = cur.execute("SELECT total_deposited FROM users WHERE user_id=?", (uid,)).fetchone()
+    if not row: return
+    dep = row[0]
+    o_row = cur.execute("SELECT COUNT(*), SUM(price) FROM orders WHERE user_id=?", (uid,)).fetchone()
+    total_orders = o_row[0] if o_row else 0
+    spent = o_row[1] if o_row and o_row[1] else 0
+    
+    msg = (f"{P_STATS} <b>My Statistics</b>\n\n"
+           f"{P_CART} <b>Accounts Bought:</b> {total_orders}\n"
+           f"{P_MONEY} <b>Total Spent:</b>\n${to_usd(spent):.2f}\n"
+           f"{P_CARD} <b>Total Deposited:</b>\n${to_usd(dep):.2f}")
+    
+    btns = [
+        [Button.inline("View Purchase Logs", "page_purchases_1", style="primary", icon_custom_emoji_id=6264777724741556322)],
+        [Button.inline("Referral Logs", "view_referrals", style="primary", icon_custom_emoji_id=6034834452843074121)]
+    ]
+    if is_callback:
+        try: await event.edit(msg, buttons=btns)
+        except MessageNotModifiedError: pass
+    else: await bot.send_message(event.chat_id, msg, buttons=btns)
+
+async def send_purchase_page(event, uid, page):
+    limit = 5
+    offset = (page - 1) * limit
+    t_row = cur.execute("SELECT COUNT(*) FROM orders WHERE user_id=?", (uid,)).fetchone()
+    total = t_row[0] if t_row else 0
+    rows = cur.execute("SELECT phone, date FROM orders WHERE user_id=? ORDER BY id DESC LIMIT ? OFFSET ?", (uid, limit, offset)).fetchall()
+    
+    msg = f"{P_DOC} <b>Purchase History (Page {page})</b>\n\n"
+    if not rows: msg += "No purchases found."
+    else:
+        for ph, d in rows:
+            try:
+                dt = datetime.strptime(d, "%Y-%m-%d %H:%M:%S")
+                d_str = dt.strftime("%a %b %d %H:%M:%S %Y")
+            except:
+                d_str = d
+            msg += f"{P_PHONE} {ph}\n{P_CAL} {d_str}\n────────────────\n"
+            
+    nav = []
+    if page > 1: nav.append(Button.inline("Prev", f"page_purchases_{page-1}", style="primary"))
+    nav.append(Button.inline("Back", "back_to_stats", style="danger"))
+    if offset + limit < total: nav.append(Button.inline("Next", f"page_purchases_{page+1}", style="primary"))
+    await event.edit(msg, buttons=[nav])
+
+async def view_referrals(event):
+    refs = cur.execute("SELECT user_id FROM users WHERE referred_by=?", (event.sender_id,)).fetchall()
+    await event.answer(f"You have referred {len(refs)} user(s).", alert=True)
+
+# ================= ADMIN ACTIONS =================
+async def admin_panel_handler(event):
+    uid = event.sender_id
+    if not is_admin(uid): return
+    
+    status_text = "Bot is ON" if is_bot_online() else "Bot is OFF"
+    btns = []
+    
+    if uid == ADMIN_ID or has_perm(uid, 'p_settings'):
+        btns.append([Button.inline(f"Status: {status_text}", "adm_togglebot", style="primary", icon_custom_emoji_id=6264907690451932671)])
+        
+    r1 = []
+    if uid == ADMIN_ID or has_perm(uid, 'p_add_stock'):
+        r1.extend([
+            Button.inline("Add Single Acc", "adm_addstock", style="success", icon_custom_emoji_id=6032733629719777782), 
+            Button.inline("Add ZIP", "adm_addzip", style="success", icon_custom_emoji_id=6269214795325510848)
+        ])
+    if r1: btns.append(r1)
+
+    r2 = []
+    if uid == ADMIN_ID or has_perm(uid, 'p_manage_stock'):
+        r2.extend([
+            Button.inline("Manage Stock", "adm_managestock", style="primary", icon_custom_emoji_id=6028126693179264852), 
+            Button.inline("Auto Price", "adm_autoprice", style="primary", icon_custom_emoji_id=6267068789146260253)
+        ])
+    if r2: btns.append(r2)
+
+    r3 = []
+    if uid == ADMIN_ID or has_perm(uid, 'p_stats'):
+        r3.extend([
+            Button.inline("Statistics", "adm_stats", style="primary", icon_custom_emoji_id=6033118016407868078), 
+            Button.inline("Broadcast", "adm_bcast", style="primary", icon_custom_emoji_id=6267129592998270736)
+        ])
+        r3.append(Button.inline("User Info", "adm_userinfo", style="primary", icon_custom_emoji_id=6282567341842633593))
+    if r3: btns.append(r3)
+
+    r4 = []
+    if uid == ADMIN_ID or has_perm(uid, 'p_bal'):
+        r4.extend([
+            Button.inline("Change Balance", "adm_bal", style="primary", icon_custom_emoji_id=6267068789146260253), 
+            Button.inline("Ban User", "adm_ban", style="danger", icon_custom_emoji_id=5780536216705308229)
+        ])
+    if r4: btns.append(r4)
+
+    r5 = []
+    if uid == ADMIN_ID or has_perm(uid, 'p_settings'):
+        r5.extend([
+            Button.inline("Discount", "adm_discount", style="primary", icon_custom_emoji_id=6269214795325510848), 
+            Button.inline("Ref %", "adm_refpct", style="primary", icon_custom_emoji_id=6034834452843074121)
+        ])
+        btns.append(r5)
+        btns.append([
+            Button.inline("Support User", "adm_supporturl", style="primary", icon_custom_emoji_id=6266794310671275367), 
+            Button.inline("Support Channel", "adm_supportchan", style="primary", icon_custom_emoji_id=6267129592998270736)
+        ])
+        btns.append([
+            Button.inline("Payments", "adm_payments", style="primary", icon_custom_emoji_id=6028517788606272241), 
+            Button.inline("Set USDT Rate", "adm_usdtrate", style="primary", icon_custom_emoji_id=6030805455691846426)
+        ])
+        btns.append([
+            Button.inline("Backup Users", "adm_backupusr", style="primary", icon_custom_emoji_id=6264777724741556322), 
+            Button.inline("Restore Users", "adm_restoreusr", style="primary", icon_custom_emoji_id=6264777724741556322)
+        ])
+
+    if uid == ADMIN_ID:
+        btns.append([Button.inline("Manage Admins", "adm_manageadmins", style="danger", icon_custom_emoji_id=5769547529993588669)])
+
+    await bot.send_message(event.chat_id, f"{P_PC} <b>ADVANCED ADMIN DASHBOARD</b>", buttons=btns)
+
+async def manage_admins_menu(event):
+    rows = cur.execute("SELECT user_id FROM admins").fetchall()
+    msg = f"{P_USERS} <b>Manage Sub-Admins</b>\n\n"
+    for r in rows: msg += f"{P_ACC} <code>{r[0]}</code>\n"
+    btns = [
+        [Button.inline("Add Admin", "adm_addadmin", style="success", icon_custom_emoji_id=6032733629719777782), Button.inline("Edit Admin", "adm_editadminreq", style="primary")],
+        [Button.inline("Back", "adm_adminmain", style="danger")]
+    ]
+    await event.edit(msg, buttons=btns)
+
+async def edit_admin_menu(event, target_id):
+    row = cur.execute("SELECT p_add_stock, p_manage_stock, p_stats, p_bal, p_settings FROM admins WHERE user_id=?", (target_id,)).fetchone()
+    if not row: return await event.answer("Admin not found", alert=True)
+    p = ["Yes" if x==1 else "No" for x in row]
+    
+    btns = [
+        [Button.inline(f"Add Stock: {p[0]}", f"adm_tglperm|{target_id}|p_add_stock", style="primary")],
+        [Button.inline(f"Manage Stock: {p[1]}", f"adm_tglperm|{target_id}|p_manage_stock", style="primary")],
+        [Button.inline(f"Stats & Bcast: {p[2]}", f"adm_tglperm|{target_id}|p_stats", style="primary")],
+        [Button.inline(f"Bal & Users: {p[3]}", f"adm_tglperm|{target_id}|p_bal", style="primary")],
+        [Button.inline(f"Settings: {p[4]}", f"adm_tglperm|{target_id}|p_settings", style="primary")],
+        [Button.inline("Remove Admin", f"adm_deladmin|{target_id}", style="danger", icon_custom_emoji_id=5785177332595561481)],
+        [Button.inline("Back", "adm_manageadmins", style="danger")]
+    ]
+    await event.edit(f"{P_DOC} <b>Editing Admin:</b> <code>{target_id}</code>", buttons=btns)
+
+async def send_manage_stock_page(event, page):
+    limit = 10
+    offset = (page - 1) * limit
+    rows = cur.execute("SELECT DISTINCT country_name FROM stock ORDER BY country_name").fetchall()
+    total = len(rows)
+    countries = rows[offset:offset+limit]
+    
+    btns = []
+    for (c,) in countries: 
+        btns.append([Button.inline(f"{c}", f"adm_msc|{c}", style="primary", icon_custom_emoji_id=5967276872134824140)])
+    
+    nav = []
+    if page > 1: nav.append(Button.inline("Prev", f"adm_mspg|{page-1}", style="primary"))
+    if offset + limit < total: nav.append(Button.inline("Next", f"adm_mspg|{page+1}", style="primary"))
+    if nav: btns.append(nav)
+    btns.append([Button.inline("Back", "adm_adminmain", style="danger")])
+    await event.edit(f"{P_DOC} <b>Manage Stock</b> (Page {page})\nSelect a country to edit its properties:", buttons=btns)
+
+async def send_manage_stock_country(event, c_name):
+    years = cur.execute("SELECT DISTINCT account_year FROM stock WHERE country_name=? ORDER BY account_year DESC", (c_name,)).fetchall()
+    btns = [
+        [Button.inline("Edit Country Name", f"adm_msedit|name|{c_name}", style="primary")],
+        [Button.inline("Edit Common Price (All Years)", f"adm_msedit|cprice|{c_name}", style="primary")]
+    ]
+    y_btns = []
+    for (y,) in years: 
+        y_btns.append(Button.inline(f"{y}", f"adm_msedit|yprice|{c_name}|{y}", style="primary", icon_custom_emoji_id=6266947228686892459))
+    
+    for i in range(0, len(y_btns), 3): btns.append(y_btns[i:i+3])
+    btns.append([Button.inline("Back", "adm_mspg|1", style="danger")])
+    await event.edit(f"{P_GLOBE} <b>Managing: {html.escape(c_name)}</b>\nSelect an option to edit:", buttons=btns)
+
+async def send_autoprice_page(event, page):
+    limit = 10
+    offset = (page - 1) * limit
+    c_list = set([c for c in COUNTRY_CODES.values()])
+    db_countries = cur.execute("SELECT DISTINCT country_name FROM stock").fetchall()
+    for (c,) in db_countries: c_list.add(c)
+    
+    custom_countries = cur.execute("SELECT DISTINCT name FROM custom_countries").fetchall()
+    for (c,) in custom_countries: c_list.add(c)
+
+    c_list = sorted(list(c_list))
+    total = len(c_list)
+    countries = c_list[offset:offset+limit]
+    
+    btns = []
+    for c in countries: 
+        btns.append([Button.inline(f"{c}", f"adm_apc|{c}", style="primary", icon_custom_emoji_id=5967276872134824140)])
+        
+    nav = []
+    if page > 1: nav.append(Button.inline("Prev", f"adm_appg|{page-1}", style="primary"))
+    if offset + limit < total: nav.append(Button.inline("Next", f"adm_appg|{page+1}", style="primary"))
+    if nav: btns.append(nav)
+    btns.append([Button.inline("Add Custom Country", "adm_ap_add_country", style="success", icon_custom_emoji_id=6032733629719777782)])
+    btns.append([Button.inline("Back", "adm_adminmain", style="danger")])
+    await event.edit(f"{P_ASST} <b>Auto Price Setup</b> (Page {page})\nSelect a country to set fixed prices:", buttons=btns)
+
+async def send_autoprice_country(event, c_name):
+    btns = [[Button.inline("Set Common Price", f"adm_apset|{c_name}|Common", style="primary")]]
+    y_btns = []
+    for y in range(2024, 1999, -1): 
+        y_btns.append(Button.inline(f"{y}", f"adm_apset|{c_name}|{y}", style="primary", icon_custom_emoji_id=6266947228686892459))
+    for i in range(0, len(y_btns), 4): btns.append(y_btns[i:i+4])
+    btns.append([Button.inline("Back", "adm_appg|1", style="danger")])
+    await event.edit(f"{P_GLOBE} <b>Auto Price: {html.escape(c_name)}</b>\nSelect 'Common' for default price, or specific years:", buttons=btns)
+
+async def admin_actions(event):
+    data_full = event.data.decode()
+    if not data_full.startswith("adm_"): return
+    uid = event.sender_id
+    action_data = data_full[4:]
+    chat = event.chat_id
+    
+    if action_data == "adminmain":
+        await event.delete()
+        class FakeEvent: chat_id = chat; sender_id = uid
+        return await admin_panel_handler(FakeEvent())
+
+    if action_data == "togglebot" and has_perm(uid, 'p_settings'):
+        new_status = 'off' if is_bot_online() else 'on'
+        cur.execute("UPDATE settings SET value=? WHERE key='bot_status'", (new_status,))
+        db.commit()
+        await event.answer(f"Bot turned {new_status.upper()}", alert=True)
+        class FakeEvent: chat_id = chat; sender_id = uid
+        await admin_panel_handler(FakeEvent())
+        await event.delete()
         return
 
-    try:
-        user_id = str(message.chat.id)
-        if user_id not in USER_STATES: return
-        state = USER_STATES[user_id].get("state")
+    elif action_data == "stats" and has_perm(uid, 'p_stats'):
+        u_row = cur.execute("SELECT COUNT(*) FROM users").fetchone()
+        u = u_row[0] if u_row else 0
+        s_row = cur.execute("SELECT COUNT(*) FROM stock WHERE available=1").fetchone()
+        s = s_row[0] if s_row else 0
+        r_row = cur.execute("SELECT value FROM settings WHERE key='upi_revenue'").fetchone()
+        r = r_row[0] if r_row else "0"
+        bal_row = cur.execute("SELECT SUM(balance) FROM users").fetchone()
+        total_bal = bal_row[0] if bal_row and bal_row[0] else 0
+        o_row = cur.execute("SELECT COUNT(*), SUM(price) FROM orders").fetchone()
+        total_orders = o_row[0] if o_row else 0
+        total_spent = o_row[1] if o_row and o_row[1] else 0
+        
+        msg = (f"{P_STATS} <b>ADVANCED STATS</b>\n\n{P_USERS} <b>Total Users:</b> {u}\n{P_PKG} <b>Accounts in Stock:</b> {s}\n"
+               f"{P_MONEY} <b>Total Revenue:</b> {P_INR}{r}\n\n{P_CARD} <b>Overall Users Balance:</b> {P_INR}{total_bal}\n"
+               f"{P_CART} <b>Total Accounts Sold:</b> {total_orders}\n{P_USDT} <b>Overall Sales Amount:</b> {P_INR}{total_spent}")
+        return await event.edit(msg, buttons=[[Button.inline("Back", "adm_adminmain", style="danger")]])
 
-        if state == "WAITING_SCRAPE_LINK":
-            link = message.text.strip() if message.text else ""
-            if not link:
-                USER_STATES.pop(user_id, None)
-                return await api_send(user_id, f"{E_WRN} Invalid input. Please click 'Scrape Group' and try again.")
-            
-            msg = await api_send(user_id, f"{E_SYNC} <b>Connecting to Group & Scraping Members...</b>\n<i>Please wait, this might take a few seconds.</i>")
-            await asyncio.sleep(2.5) 
-            await api_edit(msg.chat.id, msg.id, f"{E_CHK} <b>Scraping Successful!</b>\n\n👥 <b>Target:</b> {html.escape(link)}\n📊 <b>Active Members Found:</b> 1,842\n\n<i>These members have been temporarily cached. Full direct-targeting integration will be unlocked in the next backend update.</i>")
-            USER_STATES.pop(user_id, None)
+    elif action_data == "payments" and has_perm(uid, 'p_settings'):
+        btns = [
+            [Button.inline("Add Payment Method", "adm_addpay", style="success", icon_custom_emoji_id=6032733629719777782)],
+            [Button.inline("Remove Payment Method", "adm_delpay", style="danger", icon_custom_emoji_id=5785177332595561481)],
+            [Button.inline("Back to Admin", "adm_adminmain", style="primary")]
+        ]
+        return await event.edit(f"{P_CARD} <b>Manage Payment Methods</b>", buttons=btns)
 
-        elif state == "WAITING_FWD_LINK":
-            msg_disp = ""
-            if message.forward_from_chat and getattr(message.forward_from_chat, 'username', None):
-                ch_username = message.forward_from_chat.username
-                msg_id = message.forward_from_message_id
-                await users_col.update_one({"_id": user_id}, {"$set": {"custom_msg_type": "forward_link", "custom_msg": f"{ch_username}|{msg_id}", "custom_caption": ""}})
-                msg_disp = f"[Forwarded Post] @{ch_username}/{msg_id}"
+    elif action_data == "manageadmins" and uid == ADMIN_ID:
+        return await manage_admins_menu(event)
+
+    elif action_data.startswith("tglperm|") and uid == ADMIN_ID:
+        _, t_id, p_name = action_data.split("|")
+        cur.execute(f"UPDATE admins SET {p_name} = CASE WHEN {p_name}=1 THEN 0 ELSE 1 END WHERE user_id=?", (t_id,))
+        db.commit()
+        return await edit_admin_menu(event, t_id)
+        
+    elif action_data.startswith("deladmin|") and uid == ADMIN_ID:
+        t_id = action_data.split("|")[1]
+        cur.execute("DELETE FROM admins WHERE user_id=?", (t_id,))
+        db.commit()
+        await event.answer("Admin Removed", alert=True)
+        return await manage_admins_menu(event)
+
+    elif action_data == "managestock" and has_perm(uid, 'p_manage_stock'): return await send_manage_stock_page(event, 1)
+    elif action_data.startswith("mspg|") and has_perm(uid, 'p_manage_stock'): return await send_manage_stock_page(event, int(action_data.split("|")[1]))
+    elif action_data.startswith("msc|") and has_perm(uid, 'p_manage_stock'): return await send_manage_stock_country(event, action_data.split("|")[1])
+    elif action_data == "autoprice" and has_perm(uid, 'p_manage_stock'): return await send_autoprice_page(event, 1)
+    elif action_data.startswith("appg|") and has_perm(uid, 'p_manage_stock'): return await send_autoprice_page(event, int(action_data.split("|")[1]))
+    elif action_data.startswith("apc|") and has_perm(uid, 'p_manage_stock'): return await send_autoprice_country(event, action_data.split("|")[1])
+        
+    elif action_data == "backupusr" and has_perm(uid, 'p_settings'):
+        cur.execute("SELECT * FROM users")
+        with open("users_backup.csv", "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f); w.writerow([i[0] for i in cur.description]); w.writerows(cur.fetchall())
+        await bot.send_file(chat, "users_backup.csv", caption=f"{P_USERS} <b>Users Backup CSV</b>")
+        os.remove("users_backup.csv")
+        return await event.answer("Backup Generated!", alert=True)
+
+    async with bot.conversation(chat, timeout=600) as conv:
+        async def get_reply(txt):
+            await conv.send_message(txt + "\n\n<i>(Type /cancel to abort)</i>")
+            resp = await conv.get_response()
+            if resp.text == "/cancel": raise ValueError("Cancelled")
+            return resp
+
+        try:
+            if action_data == "ap_add_country" and has_perm(uid, 'p_manage_stock'):
+                code = (await get_reply(f"{P_PHONE} <b>Enter Country Calling Code (without +):</b>\n<i>Example: 91</i>")).text.replace("+", "").strip()
+                name = html.escape((await get_reply(f"{P_GLOBE} <b>Enter Country Name:</b>\n<i>Example: India</i>")).text.strip())
                 
-            elif message.text and "t.me/" in message.text:
-                link = message.text.strip()
-                try:
-                    parts = link.split("/")
-                    msg_id = parts[-1]
-                    ch_username = parts[-2]
-                    await users_col.update_one({"_id": user_id}, {"$set": {"custom_msg_type": "forward_link", "custom_msg": f"{ch_username}|{msg_id}", "custom_caption": ""}})
-                    msg_disp = f"[Forward Link] {ch_username}/{msg_id}"
-                except Exception:
-                    USER_STATES.pop(user_id, None)
-                    return await api_send(user_id, f"{E_WRN} Invalid link format! Failed to extract post ID. Setup cancelled.")
+                cur.execute("INSERT OR REPLACE INTO custom_countries (code, name) VALUES (?,?)", (code, name))
+                db.commit()
+                await conv.send_message(f"{P_YES} <b>Custom Country Added Successfully!</b>\n{name} (+{code})\n\n<i>It will now automatically be recognized when adding stock!</i>")
+
+            elif action_data == "userinfo" and has_perm(uid, 'p_stats'):
+                t_uid = int((await get_reply(f"{P_ACC} <b>Enter User ID:</b>")).text)
+                u_row = cur.execute("SELECT balance, total_deposited, joined_date, banned, discount FROM users WHERE user_id=?", (t_uid,)).fetchone()
+                if not u_row: return await conv.send_message(f"{P_NO} User not found.")
+                
+                o_row = cur.execute("SELECT COUNT(*), SUM(price) FROM orders WHERE user_id=?", (t_uid,)).fetchone()
+                
+                bal, dep, joined, is_banned, disc = u_row
+                o_count = o_row[0] if o_row else 0
+                o_spent = o_row[1] if o_row and o_row[1] else 0
+                
+                msg = (f"{P_ACC} <b>USER INFO:</b> <code>{t_uid}</code>\n\n"
+                       f"{P_MONEY} Balance: {P_INR}{bal}\n"
+                       f"{P_CARD} Total Deposited: {P_INR}{dep}\n"
+                       f"{P_CART} Total Orders: {o_count}\n"
+                       f"{P_USDT} Total Spent: {P_INR}{o_spent}\n"
+                       f"{P_GIFT} Discount: {disc}%\n"
+                       f"{P_CAL} Joined: {joined}\n"
+                       f"{P_OFF} Banned: {'Yes' if is_banned else 'No'}")
+                await conv.send_message(msg)
+
+            elif action_data == "addadmin" and uid == ADMIN_ID:
+                new_ad = int((await get_reply(f"{P_ACC} <b>Enter User ID for new Admin:</b>")).text)
+                cur.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (new_ad,))
+                db.commit()
+                await conv.send_message(f"{P_YES} Admin added!")
+                class FakeEvent: 
+                    async def edit(self, text, buttons): await bot.send_message(chat, text, buttons=buttons)
+                    async def answer(self, txt, alert): pass
+                await edit_admin_menu(FakeEvent(), new_ad)
+                
+            elif action_data == "editadminreq" and uid == ADMIN_ID:
+                t_id = int((await get_reply(f"{P_ACC} <b>Enter User ID to edit:</b>")).text)
+                class FakeEvent: 
+                    async def edit(self, text, buttons): await bot.send_message(chat, text, buttons=buttons)
+                    async def answer(self, txt, alert): pass
+                await edit_admin_menu(FakeEvent(), t_id)
+
+            elif action_data.startswith("msedit|") and has_perm(uid, 'p_manage_stock'):
+                parts = action_data.split("|")
+                action, c_name = parts[1], parts[2]
+                
+                if action == "name":
+                    new_name = html.escape((await get_reply(f"{P_DOC} <b>Enter NEW Name for {html.escape(c_name)}:</b>")).text)
+                    cur.execute("UPDATE stock SET country_name=? WHERE country_name=?", (new_name, c_name))
+                    cur.execute("UPDATE auto_prices SET country=? WHERE country=?", (new_name, c_name))
+                    db.commit()
+                    await conv.send_message(f"{P_YES} Country '{html.escape(c_name)}' successfully renamed to '{new_name}'!")
                     
-            elif message.text:
-                await users_col.update_one({"_id": user_id}, {"$set": {"custom_msg_type": "text", "custom_msg": message.text, "custom_caption": ""}})
-                msg_disp = html.escape(message.text)
-                
-            elif message.photo:
-                await users_col.update_one({"_id": user_id}, {"$set": {"custom_msg_type": "photo", "custom_msg": message.photo.file_id, "custom_caption": message.caption or ""}})
-                msg_disp = "[Photo Message]"
-                
-            else:
-                USER_STATES.pop(user_id, None)
-                return await api_send(user_id, f"{E_WRN} Invalid format. Send a link, text, photo, or forward a public post.")
-                
-            USER_STATES.pop(user_id, None)
-            text = f"{E_PLAY} <b>Mass DM Control Panel</b>\n\n💬 <b>Current Message:</b>\n<code>{msg_disp}</code>\n\nSelect your target channel or change your message below."
-            btn = {"inline_keyboard": [
-                [ibtn("Target Channel (Join Req)", "tgt_own", style="primary", icon=BTN_EMOJIS["target"]), ibtn("Target Alt's DMs", "tgt_alt_dms", style="success", icon=BTN_EMOJIS["user"])], 
-                [ibtn("Target Admin's Free Channel", "tgt_free", style="primary", icon=BTN_EMOJIS["target"])], 
-                [ibtn("Set Text/Photo", "set_msg", style="danger", icon=BTN_EMOJIS["setting"]), ibtn("Set Universal Msg", "set_fwd_msg", style="danger", icon=BTN_EMOJIS["globe"])], 
-                [ibtn("Back to Main Menu", "back_home", style="secondary", icon=BTN_EMOJIS["home"])]
-            ]}
-            await api_send(user_id, text, kb=btn)
+                elif action == "cprice":
+                    new_p = int((await get_reply(f"{P_MONEY} <b>Enter NEW Common Price for all {html.escape(c_name)} accounts:</b>")).text)
+                    cur.execute("UPDATE stock SET price=? WHERE country_name=?", (new_p, c_name))
+                    db.commit()
+                    await conv.send_message(f"{P_YES} All existing '{html.escape(c_name)}' accounts updated to {P_INR}{new_p}!")
+                    
+                elif action == "yprice":
+                    year = parts[3]
+                    new_p = int((await get_reply(f"{P_MONEY} <b>Enter NEW Price for {html.escape(c_name)} ({year}):</b>")).text)
+                    cur.execute("UPDATE stock SET price=? WHERE country_name=? AND account_year=?", (new_p, c_name, year))
+                    db.commit()
+                    await conv.send_message(f"{P_YES} All existing '{html.escape(c_name)}' ({year}) accounts updated to {P_INR}{new_p}!")
+                    
+            elif action_data.startswith("apset|") and has_perm(uid, 'p_manage_stock'):
+                parts = action_data.split("|")
+                c_name, year = parts[1], parts[2]
+                new_p = int((await get_reply(f"{P_ASST} <b>Enter Auto-Price for {html.escape(c_name)} ({year}):</b>\n<i>(Enter 0 to remove this auto-price)</i>")).text)
+                if new_p == 0:
+                    cur.execute("DELETE FROM auto_prices WHERE country=? AND year=?", (c_name, year))
+                    await conv.send_message(f"{P_YES} Auto-Price for {html.escape(c_name)} ({year}) removed!")
+                else:
+                    cur.execute("INSERT OR REPLACE INTO auto_prices (country, year, price) VALUES (?,?,?)", (c_name, year, new_p))
+                    await conv.send_message(f"{P_YES} Auto-Price for {html.escape(c_name)} ({year}) set to {P_INR}{new_p}! Incoming accounts will use this price automatically.")
+                db.commit()
 
-        elif state == "WAITING_FAMPAY_UTR":
-            utr = message.text.strip() if message.text else ""
-            if not utr or len(utr) < 5 or not utr.isalnum(): 
-                USER_STATES.pop(user_id, None)
-                return await api_send(user_id, f"{E_WRN} Invalid UTR or Transaction ID. Request cancelled, please click 'I Have Paid' and try again.")
-            
-            user_state_data = USER_STATES.pop(user_id, {})
-            days = user_state_data.get("days", 1)
-            price = float(user_state_data.get("price", 0.0))
-            
-            msg = await api_send(user_id, f"{E_SYNC} <b>Scanning Gmail for UTR/TxnID: {utr}</b>\n<i>Please wait 10-15 seconds...</i>")
-            paid_amount = await asyncio.to_thread(check_payment_in_gmail, utr)
-            
-            if paid_amount and paid_amount >= price:
-                u = await get_user(user_id); current_time = time.time()
-                today_date = get_ist_str("%Y-%m-%d")
+            elif action_data == "addpay" and has_perm(uid, 'p_settings'):
+                name = html.escape((await get_reply(f"{P_CARD} <b>Enter Payment Method Name:</b>\n<i>(e.g., Binance Pay, TRX)</i>")).text)
+                qr_msg = await get_reply(f"{P_EYE} <b>Send QR Code Image:</b>\n<i>(Or type <code>skip</code> if no QR needed)</i>")
+                qr_path = ""
+                if qr_msg.photo:
+                    qr_path = f"qr_{int(time.time())}.jpg"
+                    await bot.download_media(qr_msg, qr_path)
                 
-                nex = max(current_time, u.get("premium_expiry", 0)) + (days * 86400)
-                await users_col.update_one({"_id": user_id}, {"$set": {"premium_expiry": nex}})
-                exp_str = get_ist_ts_str(nex)
-                await api_edit(msg.chat.id, msg.id, f"{E_DIA} <b>Payment Auto-Approved! ({days} Days)</b>\n\n{E_CHK} ID: <code>{utr}</code>\n{E_MONEY} Amount: ₹{paid_amount}\n\n🎉 <b>Your Premium is active until:</b>\n{E_CAL} <b>{exp_str}</b>")
-                try: await api_send(ADMINS[0], f"{E_DIA} <b>Smart Auto-Approve</b>\n{E_PROF} User ID: <code>{user_id}</code>\n💳 Paid: ₹{paid_amount} for {days} Days\n🔖 ID: <code>{utr}</code>")
-                except: pass
-                await settings_col.update_one({"_id": "config"}, {"$inc": {"total_sales_inr": paid_amount, f"sales_history.{today_date}": paid_amount}})
-            else:
-                await api_edit(msg.chat.id, msg.id, f"{E_WRN} <b>Payment Not Found or Amount Mismatch!</b>\n\nWe scanned Gmail but couldn't verify ₹{price} for ID <code>{utr}</code>.\n\n<i>Tip: Wait 1-2 minutes for the email to arrive and try again.</i>")
+                cap_msg = (await get_reply(f"{P_DOC} <b>Enter Payment Caption:</b>\n<i>(Use <code>text</code> to make wallet IDs or UPI copyable)</i>")).text
+                cap_msg = html.escape(cap_msg).replace("&lt;code&gt;", "<code>").replace("&lt;/code&gt;", "</code>")
+                cur.execute("INSERT INTO custom_payments (name, caption, qr_file_id) VALUES (?,?,?)", (name, cap_msg, qr_path))
+                db.commit()
+                await conv.send_message(f"{P_YES} Payment Method '{name}' added successfully!")
 
-        elif state == "WAITING_MANUAL_UTR":
-            utr = message.text.strip() if message.text else ""
-            if not utr or len(utr) < 5:
-                USER_STATES.pop(user_id, None)
-                return await api_send(user_id, f"{E_WRN} Invalid UTR or Transaction Hash. Request cancelled, please try again.")
-            
-            USER_STATES[user_id]["utr"] = utr
-            USER_STATES[user_id]["state"] = "WAITING_MANUAL_SS"
-            await api_send(user_id, f"📸 <b>Step 2/2:</b> Now send the <b>Payment Screenshot</b>.")
+            elif action_data == "delpay" and has_perm(uid, 'p_settings'):
+                rows = cur.execute("SELECT id, name FROM custom_payments").fetchall()
+                if not rows: return await conv.send_message(f"{P_NO} No custom payment methods.")
+                msg = f"{P_DOC} <b>Reply with the ID of the method to delete:</b>\n\n"
+                for r in rows: msg += f"ID: {r[0]} - {html.escape(r[1])}\n"
+                del_id = (await get_reply(msg)).text
+                try:
+                    del_id = int(del_id)
+                    file_path = cur.execute("SELECT qr_file_id FROM custom_payments WHERE id=?", (del_id,)).fetchone()
+                    if file_path and file_path[0] and os.path.exists(file_path[0]): os.remove(file_path[0])
+                    cur.execute("DELETE FROM custom_payments WHERE id=?", (del_id,))
+                    db.commit()
+                    await conv.send_message(f"{P_YES} Deleted!")
+                except: await conv.send_message(f"{P_NO} Invalid ID.")
 
-        elif state == "WAITING_MANUAL_SS":
-            if not message.photo: 
-                USER_STATES.pop(user_id, None)
-                return await api_send(user_id, f"{E_WRN} Please send a valid photo screenshot. Process cancelled, please start over.")
+            elif action_data == "addzip" and has_perm(uid, 'p_add_stock'):
+                resp = await get_reply(f"{P_PKG} <b>Send the ZIP file containing <code>.session</code> files:</b>")
+                if not resp.file or not resp.file.name.endswith('.zip'): return await conv.send_message(f"{P_NO} Invalid file.")
                 
-            user_state_data = USER_STATES.pop(user_id, {})
-            days = user_state_data.get("days", 1)
-            utr = user_state_data.get("utr", "Unknown")
-            
-            btn = {"inline_keyboard": [[ibtn("Approve", f"manapp_{user_id}_{days}", style="success", icon=BTN_EMOJIS["tick"]), ibtn("Reject", f"manrej_{user_id}_{days}", style="danger", icon=BTN_EMOJIS["cross"])]]}
-            for admin in ADMINS:
-                try: await api_send(admin, f"{E_MONEY} <b>Manual Payment Pending! (PREMIUM)</b>\n{E_PROF} User ID: <code>{user_id}</code>\n👤 Name: {message.from_user.first_name}\n{E_CAL} Plan: {days} Days\n{E_CHK} UTR/Hash: <code>{utr}</code>", kb=btn, photo=message.photo.file_id)
-                except: pass
-            await api_send(user_id, f"{E_WAIT} <b>Success!</b> Screenshot & UTR sent to admins for manual verification.")
+                await conv.send_message(f"{P_WAIT} <b>Extracting & Scanning Accounts...</b>")
+                zip_path = await bot.download_media(resp, "temp_sessions.zip")
+                extracted_dir = f"temp_extracted_{int(time.time())}"
+                os.makedirs(extracted_dir, exist_ok=True)
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref: zip_ref.extractall(extracted_dir)
 
-        elif state == "WAITING_PHONE":
-            phone = message.text.replace(" ", "") if message.text else ""
-            if not phone:
-                USER_STATES.pop(user_id, None)
-                return await api_send(user_id, f"{E_WRN} Invalid Phone Number. Please try again.")
-            
-            if phone.isdigit() and not phone.startswith("+"):
-                phone = "+" + phone
+                groups = {}
+                for file in os.listdir(extracted_dir):
+                    if not file.endswith(".session"): continue
+                    sess_path = os.path.join(extracted_dir, file)
+                    clean_path = sess_path[:-8]
+                    try:
+                        client = TelegramClient(clean_path, API_ID, API_HASH)
+                        await client.connect()
+                        if not await client.is_user_authorized(): await client.disconnect(); continue
+                        me = await client.get_me()
+                        phone = getattr(me, 'phone', None)
+                        if not phone: await client.disconnect(); continue
+                        
+                        c_name = get_country_info(phone)
+                        pwd = await client(GetPasswordRequest())
+                        has_2fa = pwd.has_password
+                        year = await detect_account_year(client)
+                        await client.disconnect()
+
+                        key = (c_name, year, has_2fa)
+                        if key not in groups: groups[key] = []
+                        groups[key].append({"phone": phone, "path": clean_path})
+                    except Exception as e: logger.error(f"Scan error: {e}")
+
+                for key in list(groups.keys()):
+                    if key[0] == "Unknown":
+                        sample_phone = groups[key][0]["phone"]
+                        await conv.send_message(f"{P_WARN} <b>Country not recognized for +{sample_phone}!</b>")
+                        new_name = html.escape((await get_reply(f"{P_GLOBE} <b>Enter Country Name:</b>\n<i>Example: India</i>")).text)
+                        new_key = (new_name, key[1], key[2])
+                        groups[new_key] = groups.pop(key)
+
+                success = 0
+                for (c_name, year, has_2fa), accs in groups.items():
+                    twofa_pass = "None"
+                    if has_2fa: twofa_pass = html.escape((await get_reply(f"{P_2FA} <b>Enter 2FA Password for {len(accs)}x {html.escape(c_name)} accounts:</b>")).text)
+
+                    auto_row = cur.execute("SELECT price FROM auto_prices WHERE country=? AND year=?", (c_name, str(year))).fetchone()
+                    if not auto_row: auto_row = cur.execute("SELECT price FROM auto_prices WHERE country=? AND year='Common'", (c_name,)).fetchone()
+
+                    if auto_row:
+                        price = auto_row[0]
+                        await conv.send_message(f"{P_FIRE} <b>Auto-Price Applied:</b> {len(accs)}x {html.escape(c_name)} ({year}) at {P_INR}{price}.")
+                    else:
+                        existing_price = cur.execute("SELECT price FROM stock WHERE country_name=? LIMIT 1", (c_name,)).fetchone()
+                        if existing_price:
+                            price = existing_price[0]
+                            await conv.send_message(f"{P_FIRE} <b>Auto-Added:</b> {len(accs)}x {html.escape(c_name)} at {P_INR}{price} (Copied from DB).")
+                        else:
+                            price = int((await get_reply(f"{P_DOC} Found {len(accs)}x {html.escape(c_name)} ({year}).\n{P_MONEY} Enter Price (₹):")).text)
+
+                    for acc in accs:
+                        perm_base = f"sessions/{acc['phone']}"
+                        for ext in ['.session', '.session-wal', '.session-shm', '.session-journal']:
+                            if os.path.exists(acc['path'] + ext): shutil.move(acc['path'] + ext, perm_base + ext)
+                        cur.execute("INSERT OR REPLACE INTO stock (phone, session_file, country_name, account_year, category, price, available, twofa) VALUES (?,?,?,?,?,?,?,?)", 
+                                    (acc['phone'], perm_base + ".session", c_name, year, 'Good', price, 1, twofa_pass))
+                        success += 1
+                db.commit()
+                os.remove(zip_path); shutil.rmtree(extracted_dir)
+                await conv.send_message(f"{P_YES} <b>Bulk Interactive Upload Complete!</b>\n{P_ON} Added: {success}")
+
+            elif action_data == "addstock" and has_perm(uid, 'p_add_stock'):
+                phone = (await get_reply(f"{P_PHONE} Enter Phone (+919999...):")).text.replace(" ", "").replace("+", "")
+                sp = f"sessions/{phone}"
+                client = TelegramClient(sp, API_ID, API_HASH)
+                await client.connect()
+                sreq = await client.send_code_request(phone)
                 
-            msg = await api_send(user_id, f"{E_SYNC} <i>Connecting to Telegram Servers...</i>")
-            temp_client = Client(f"session_{user_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
-            await temp_client.connect()
+                twofa_pass = "None"
+                try: 
+                    await client.sign_in(phone, (await get_reply(f"{P_OTP} OTP:")).text, phone_code_hash=sreq.phone_code_hash)
+                except SessionPasswordNeededError: 
+                    twofa_pass = html.escape((await get_reply(f"{P_2FA} 2FA Pass required. Enter it now:")).text)
+                    await client.sign_in(password=twofa_pass)
+                
+                c_name = get_country_info(phone)
+                
+                if c_name == "Unknown":
+                    await conv.send_message(f"{P_WARN} <b>Country not recognized for +{phone}!</b>")
+                    c_name = html.escape((await get_reply(f"{P_GLOBE} <b>Enter Country Name:</b>\n<i>Example: India</i>")).text)
+                
+                auto_year = await detect_account_year(client)
+                await client.disconnect()
+                
+                year = int((await get_reply(f"{P_CAL} Detected Year: <b>{auto_year}</b>\nReply with Year to confirm or change:")).text)
+                auto_row = cur.execute("SELECT price FROM auto_prices WHERE country=? AND year=?", (c_name, str(year))).fetchone()
+                if not auto_row: auto_row = cur.execute("SELECT price FROM auto_prices WHERE country=? AND year='Common'", (c_name,)).fetchone()
+
+                if auto_row:
+                    price = auto_row[0]
+                    await conv.send_message(f"{P_FIRE} <b>Auto-Price Applied:</b> {P_INR}{price} for {html.escape(c_name)} ({year})")
+                else:
+                    existing_price = cur.execute("SELECT price FROM stock WHERE country_name=? LIMIT 1", (c_name,)).fetchone()
+                    if existing_price:
+                        price = existing_price[0]
+                        await conv.send_message(f"{P_FIRE} <b>Auto-detected Price:</b> {P_INR}{price} for {html.escape(c_name)}")
+                    else: price = int((await get_reply(f"{P_MONEY} Price (₹):")).text)
+                
+                cur.execute("INSERT OR REPLACE INTO stock (phone, session_file, country_name, account_year, category, price, available, twofa) VALUES (?,?,?,?,?,?,?,?)", 
+                            (phone, sp + ".session", c_name, year, 'Good', price, 1, twofa_pass))
+                db.commit()
+                await conv.send_message(f"{P_YES} Added!")
+
+            # ----------------- SUPPORT USERNAME/URL UPDATE -----------------
+            elif action_data == "supporturl" and has_perm(uid, 'p_settings'):
+                url_inp = (await get_reply(f"{P_DOC} <b>Enter new Support Username or URL:</b>\n<i>(Examples: <code>@tgtelehelpbot</code> or <code>https://t.me/yourusername</code>)</i>")).text.strip()
+                if not url_inp.startswith("http://") and not url_inp.startswith("https://"):
+                    url_inp = "https://t.me/" + url_inp.lstrip("@")
+                cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('support_url', ?)", (url_inp,))
+                db.commit()
+                await conv.send_message(f"{P_YES} <b>Support Link/Username updated successfully!</b>\nTarget: <code>{url_inp}</code>")
+
+            # ----------------- SUPPORT CHANNEL LINK UPDATE -----------------
+            elif action_data == "supportchan" and has_perm(uid, 'p_settings'):
+                chan_inp = (await get_reply(f"{P_GLOBE} <b>Enter new Support Channel Link or Username:</b>\n<i>(Examples: <code>https://t.me/+5ie3z_oE12UzYWE1</code> or <code>@MyChannel</code>)</i>")).text.strip()
+                if not chan_inp.startswith("http://") and not chan_inp.startswith("https://"):
+                    chan_inp = "https://t.me/" + chan_inp.lstrip("@")
+                cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('support_channel_url', ?)", (chan_inp,))
+                db.commit()
+                await conv.send_message(f"{P_YES} <b>Support Channel Link updated successfully!</b>\nTarget: <code>{chan_inp}</code>")
+
+            elif action_data == "bcast" and has_perm(uid, 'p_stats'):
+                txt = (await get_reply(f"{P_DOC} <b>Message (Supports HTML & tg-emoji tags):</b>")).text
+                btn_name = (await get_reply("Button Name (or 'skip'):")).text
+                url = (await get_reply("URL:")).text if btn_name.lower() != 'skip' else None
+                btns = [[Button.url(btn_name, url)]] if url else None
+                users = cur.execute("SELECT user_id FROM users").fetchall()
+                s, f = 0, 0
+                await conv.send_message(f"{P_TG} Broadcasting...")
+                for (u_id,) in users:
+                    try: 
+                        await bot.send_message(int(u_id), txt, buttons=btns, parse_mode='html')
+                        s += 1
+                    except: f += 1
+                    await asyncio.sleep(0.1) 
+                await conv.send_message(f"{P_YES} Done! Sent: {s} | Failed: {f}")
+
+            elif action_data == "bal" and has_perm(uid, 'p_bal'):
+                t_uid = int((await get_reply(f"{P_ACC} <b>User ID:</b>")).text)
+                amt = int((await get_reply(f"{P_MONEY} <b>Amount (Negative to deduct):</b>")).text)
+                update_balance(t_uid, amt)
+                await conv.send_message(f"{P_YES} Added {P_INR}{amt} to {t_uid}.")
+                
+            elif action_data == "discount" and has_perm(uid, 'p_settings'):
+                t_uid = int((await get_reply(f"{P_ACC} <b>User ID:</b>")).text)
+                pct = int((await get_reply(f"{P_GIFT} <b>Discount % (0 to remove):</b>")).text)
+                cur.execute("UPDATE users SET discount=? WHERE user_id=?", (pct, t_uid))
+                db.commit()
+                await conv.send_message(f"{P_YES} User {t_uid} has {pct}% discount.")
+                
+            elif action_data == "refpct" and has_perm(uid, 'p_settings'):
+                pct = int((await get_reply(f"{P_USERS} <b>New Referral %:</b>")).text)
+                cur.execute("UPDATE settings SET value=? WHERE key='ref_percent'", (str(pct),))
+                db.commit()
+                await conv.send_message(f"{P_YES} Ref revenue set to {pct}%.")
+
+            elif action_data == "usdtrate" and has_perm(uid, 'p_settings'):
+                r = float((await get_reply(f"{P_USDT} <b>New USDT Rate (INR):</b>")).text)
+                cur.execute("UPDATE settings SET value=? WHERE key='usdt_rate'", (str(r),))
+                db.commit()
+                await conv.send_message(f"{P_YES} Rate set to {r}.")
+
+            elif action_data == "restoreusr" and has_perm(uid, 'p_settings'):
+                resp = await get_reply(f"{P_DOC} <b>Send the <code>users_backup.csv</code> file:</b>")
+                if not resp.file or not resp.file.name.endswith('.csv'): return await conv.send_message(f"{P_NO} Invalid file.")
+                await bot.download_media(resp, "temp_restore.csv")
+                with open("temp_restore.csv", "r", encoding="utf-8") as f:
+                    reader = csv.reader(f); next(reader); count = 0
+                    for row in reader:
+                        try:
+                            cur.execute("INSERT OR REPLACE INTO users (user_id, balance, referred_by, total_deposited, joined_date, banned, discount, terms_accepted) VALUES (?,?,?,?,?,?,?,?)", 
+                                        (int(row[0]), int(row[1]), row[2] if row[2] else None, int(row[3]), row[4], int(row[5]), int(row[6]), int(row[7])))
+                            count += 1
+                        except: pass
+                db.commit()
+                os.remove("temp_restore.csv")
+                await conv.send_message(f"{P_YES} Restored {count} users.")
+
+            elif action_data == "ban" and has_perm(uid, 'p_bal'):
+                t_uid = int((await get_reply(f"{P_ACC} <b>User ID:</b>")).text)
+                is_ban = cur.execute("SELECT banned FROM users WHERE user_id=?", (t_uid,)).fetchone()
+                if not is_ban: return await conv.send_message(f"{P_NO} User not found.")
+                ns = 0 if is_ban[0] == 1 else 1
+                cur.execute("UPDATE users SET banned=? WHERE user_id=?", (ns, t_uid))
+                db.commit()
+                await conv.send_message(f"User {t_uid} status updated: {'Banned' if ns == 1 else 'Unbanned'}.")
+
+        except ValueError: await conv.send_message(f"{P_NO} Cancelled.")
+        except Exception as e: await conv.send_message(f"{P_NO} Error: {e}")
+
+# ================= CORE EVENT ROUTERS =================
+@bot.on(events.NewMessage(pattern=r"(?i)^/start"))
+async def handle_start(e):
+    try:
+        uid = e.sender_id
+        if not uid: return
+        
+        ensure_user(uid)
+        if is_user_banned(uid): return
+
+        if not is_bot_online() and not is_admin(uid):
+            return await e.respond(f"{P_OFF} <b>Bot is currently under maintenance.</b> Please try again later.")
+        
+        session_buy_state.pop(uid, None)
+        deposit_input.pop(uid, None)
+
+        text = e.text or ''
+        if len(text.split()) > 1:
+            start_param = text.split()[1]
+            if start_param.startswith("ref_"):
+                ref = start_param.replace("ref_", "")
+                if ref.isdigit() and int(ref) != uid:
+                    cur.execute("UPDATE users SET referred_by=? WHERE user_id=? AND referred_by IS NULL", (int(ref), uid))
+                    db.commit()
+
+        is_joined = await check_channel_joined(uid)
+        if not is_joined:
+            btns = [[Button.url(f"Join Channel {i+1}", link, style="primary", icon_custom_emoji_id=6267129592998270736)] for i, link in enumerate(JOIN_URLS)]
+            btns.append([Button.inline("Verify Joined", "verify_join", style="success", icon_custom_emoji_id=6267008582294705964)])
+            msg = f"{P_WARN} <b>You must join our channels first!</b>"
+            return await e.respond(msg, buttons=btns)
+
+        row = cur.execute("SELECT terms_accepted FROM users WHERE user_id=?", (uid,)).fetchone()
+        terms_acc = row[0] if row else 0
+        if not terms_acc:
+            msg = f"{P_DOC} <b>TERMS & CONDITIONS</b>\nPlease read and accept our Terms & Conditions before using the bot."
+            btns = [
+                [Button.url("Read Terms & Conditions", TERMS_URL, style="primary", icon_custom_emoji_id=6264777724741556322)],
+                [Button.inline("Accept", "tc_accept", style="success", icon_custom_emoji_id=6267008582294705964), Button.inline("Reject", "tc_reject", style="danger", icon_custom_emoji_id=5785177332595561481)]
+            ]
+            return await e.respond(msg, buttons=btns)
+
+        await send_main_menu(e, uid)
+    except Exception as ex: 
+        logger.error(f"Start Error: {ex}", exc_info=True)
+
+@bot.on(events.NewMessage())
+async def handle_all_messages(e):
+    try:
+        uid = e.sender_id
+        if not uid: return
+        if getattr(e, 'text', None) and e.text.startswith('/'): return
+        if not is_bot_online() and not is_admin(uid):
+            return await e.respond(f"{P_OFF} <b>Bot is currently under maintenance.</b> Please try again later.")
+        
+        ensure_user(uid)
+        if is_user_banned(uid): return
+
+        # Screenshot Proof processing
+        if uid in waiting_proof and (e.photo or (e.text and "http" in e.text)):
+            info = waiting_proof.pop(uid)
+            final_amt = info['amount']
+            
+            cur.execute("INSERT INTO deposits (user_id, amount, method_name, status) VALUES (?,?,?,?)", (uid, final_amt, info['method'], "pending"))
+            db.commit()
+            dep_id = cur.lastrowid
+            await e.reply(f"{P_YES} Deposit Request Submitted! Wait for Admin Verification & Approval.")
+            cap = f"{P_BELL} <b>NEW MANUAL DEPOSIT REQUEST</b>\n\n{P_ACC} User ID: <code>{uid}</code>\n{P_MONEY} Request: <b>{P_INR}{info['amount']}</b>\n{P_CARD} Method: {html.escape(info['method'])}\n{P_ID} Ref ID: <code>{dep_id}</code>"
+            btns = [
+                [Button.inline(f"Accept (₹{final_amt})", f"dep_acc|{dep_id}|{uid}|{info['method']}|exact|{final_amt}", style="success", icon_custom_emoji_id=6267008582294705964), Button.inline("Reject", f"dep_rej|{dep_id}|{uid}", style="danger", icon_custom_emoji_id=5785177332595561481)],
+                [Button.inline("Custom Amount", f"dep_acc|{dep_id}|{uid}|{info['method']}|custom|0", style="primary", icon_custom_emoji_id=6282846669335702032)]
+            ]
+            
             try:
-                code_info = await temp_client.send_code(phone)
-                USER_STATES[user_id].update({"state": "WAITING_OTP", "phone": phone, "phone_code_hash": code_info.phone_code_hash, "temp_client": temp_client})
-                await api_edit(msg.chat.id, msg.id, f"📩 <b>OTP Sent Successfully!</b>\n\n{E_CHK} <b>Send with spaces:</b> <code>1 2 3 4 5</code>")
-            except Exception as e: 
-                USER_STATES.pop(user_id, None)
-                await api_edit(msg.chat.id, msg.id, f"{E_WRN} <b>Error:</b> {e}\n<i>Please start over.</i>")
-                try: await temp_client.disconnect()
-                except: pass
+                if e.photo: await bot.send_message(LOG_CHANNEL_ID, cap, file=e.media, buttons=btns)
+                else: await bot.send_message(LOG_CHANNEL_ID, cap + f"\nLink: {html.escape(e.text)}", buttons=btns)
+            except Exception as log_err:
+                logger.error(f"Failed to log deposit: {log_err}")
+            return
 
-        elif state == "WAITING_OTP":
-            otp = message.text.replace(" ", "") if message.text else ""
-            if not otp:
-                USER_STATES.pop(user_id, None)
-                return await api_send(user_id, f"{E_WRN} Invalid OTP. Please try again.")
+        text = e.text or ""
+        if not text: return
+
+        if text in ["Buy Account", "Buy Sessions", "Deposit", "My Profile", "My Stats", "Support", "Admin Panel"]:
+            session_buy_state.pop(uid, None)
+            deposit_input.pop(uid, None)
+            admin_dep_state.pop(uid, None)
+
+        if is_admin(uid) and uid in admin_dep_state:
+            st = admin_dep_state[uid]
+            if st['step'] == 'wait_reason':
+                t_uid, dep_id, msg_id = st['target_uid'], st['dep_id'], st['msg_id']
+                cur.execute("UPDATE deposits SET status='rejected' WHERE id=?", (dep_id,))
+                db.commit()
                 
-            user_state_data = USER_STATES.get(user_id, {})
-            temp_client = user_state_data.get("temp_client")
-            if not temp_client:
-                USER_STATES.pop(user_id, None)
-                return await api_send(user_id, f"{E_WRN} Session timed out. Please try again.")
-                
-            msg = await api_send(user_id, f"{E_SYNC} <i>Verifying OTP...</i>")
-            try:
-                await temp_client.sign_in(user_state_data.get("phone"), user_state_data.get("phone_code_hash"), otp)
-                ss = await temp_client.export_session_string()
-                await users_col.update_one({"_id": user_id}, {"$push": {"sessions": ss}})
-                await api_edit(msg.chat.id, msg.id, f"{E_CHK} <b>Session Added Successfully!</b>\nRedirecting to Main Menu...")
-                await temp_client.disconnect(); USER_STATES.pop(user_id, None)
-                
-                await asyncio.sleep(1.5); config = await settings_col.find_one({"_id": "config"})
-                first_name = html.escape(message.from_user.first_name if message.from_user else "User")
-                text, btn = await get_home_menu(user_id, first_name, config)
-                await api_send(user_id, text, kb=btn)
-            except SessionPasswordNeeded:
-                USER_STATES[user_id]["state"] = "WAITING_PASSWORD"
-                await api_edit(msg.chat.id, msg.id, f"🔐 <b>Enter your 2FA Password:</b>")
-            except Exception as e: 
-                USER_STATES.pop(user_id, None)
-                await api_edit(msg.chat.id, msg.id, f"{E_WRN} <b>Error:</b> {e}")
-                try: await temp_client.disconnect()
+                try: await bot.edit_message(LOG_CHANNEL_ID, msg_id, f"{P_NO} <b>REJECTED USER {t_uid}</b>\nReason: {html.escape(text)}")
                 except: pass
                 
-        elif state == "WAITING_PASSWORD":
-            user_state_data = USER_STATES.get(user_id, {})
-            temp_client = user_state_data.get("temp_client")
-            if not temp_client:
-                USER_STATES.pop(user_id, None)
+                await bot.send_message(int(t_uid), f"{P_NO} <b>Deposit Rejected!</b>\nReason: {html.escape(text)}")
+                await e.reply(f"{P_YES} Rejection reason sent.")
+                admin_dep_state.pop(uid)
                 return
-                
-            msg = await api_send(user_id, f"{E_SYNC} <i>Verifying Password...</i>")
+
+        if uid in session_buy_state:
+            state = session_buy_state[uid]
             try:
-                await temp_client.check_password(message.text)
-                ss = await temp_client.export_session_string()
-                await users_col.update_one({"_id": user_id}, {"$push": {"sessions": ss}})
-                await api_edit(msg.chat.id, msg.id, f"{E_CHK} <b>Session Added Successfully!</b>\nRedirecting to Main Menu...")
-                await temp_client.disconnect(); USER_STATES.pop(user_id, None)
+                qty = int(re.sub(r'[^\d]', '', text))
+                if qty < 1: raise ValueError
+                if qty > state['stock']: return await e.respond(f"{P_WARN} <b>Not enough stock!</b> Max is {state['stock']}.")
                 
-                await asyncio.sleep(1.5); config = await settings_col.find_one({"_id": "config"})
-                first_name = html.escape(message.from_user.first_name if message.from_user else "User")
-                text, btn = await get_home_menu(user_id, first_name, config)
-                await api_send(user_id, text, kb=btn)
-            except Exception as e: 
-                USER_STATES.pop(user_id, None)
-                await api_edit(msg.chat.id, msg.id, f"{E_WRN} <b>Error:</b> {e}")
-                try: await temp_client.disconnect()
+                disc_row = cur.execute("SELECT discount FROM users WHERE user_id=?", (uid,)).fetchone()
+                discount = disc_row[0] if disc_row else 0
+                total_cost = qty * state['price']
+                if discount > 0: total_cost = int(total_cost * (100 - discount) / 100)
+                    
+                bal_row = cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
+                user_bal = bal_row[0] if bal_row else 0
+                if user_bal < total_cost: return await e.respond(f"{P_NO} <b>Insufficient Balance!</b>\nYou need {P_INR}{total_cost} to buy {qty} sessions.")
+
+                session_buy_state.pop(uid)
+                await process_bulk_sessions(e, uid, qty, state, total_cost)
+                return
+            except ValueError: return await e.respond(f"{P_NO} Please enter a valid number.")
+
+        if uid in deposit_input and deposit_input[uid]['step'] == 'wait_amt':
+            try:
+                amt = int(re.sub(r'[^\d]', '', text))
+                if amt < 10: return await e.reply(f"{P_WARN} Minimum Deposit is ₹10.")
+                method = deposit_input[uid]['method']
+                waiting_proof[uid] = {'amount': amt, 'method': method}
+                deposit_input.pop(uid)
+                
+                rate = get_usdt_rate()
+                usdt_amt = round(amt / rate, 2)
+                rate_text = f"\n\n{P_MONEY} <b>Amount to Pay:</b> {P_INR}{amt} (~{P_USDT}{usdt_amt} USDT)\n{P_DIAMOND} <i>Exchange Rate: {P_INR}{rate} = $1</i>"
+                
+                row = cur.execute("SELECT caption, qr_file_id FROM custom_payments WHERE name=?", (method,)).fetchone()
+                if row:
+                    cap = row[0] + f"{rate_text}\n\n<b>After paying, send a clear Screenshot here:</b>"
+                    btns = [[Button.inline("Cancel", "cancel_action", style="danger", icon_custom_emoji_id=5785177332595561481)]]
+                    if row[1] and os.path.exists(row[1]): 
+                        try: await bot.send_file(e.chat_id, row[1], caption=cap, buttons=btns)
+                        except: await e.reply(cap, buttons=btns)
+                    else: await e.reply(cap, buttons=btns)
+                else: await e.reply(f"{P_CARD} <b>{html.escape(method)} Deposit</b>{rate_text}\n\nSend Screenshot here:", buttons=[[Button.inline("Cancel", "cancel_action", style="danger", icon_custom_emoji_id=5785177332595561481)]])
+            except ValueError: await e.respond(f"{P_NO} Please enter a valid number in INR (₹).")
+            return
+
+        if text == "Buy Account": await show_countries(e, 'single', 1)
+        elif text == "Buy Sessions": await show_countries(e, 'bulk', 1)
+        elif text == "Deposit": await deposit_menu(e)
+        elif text == "My Profile": await profile_handler(e)
+        elif text == "My Stats": await stats_handler(e)
+        elif text == "Support": 
+            await e.reply(
+                f"{P_ON} <b>Fresh TG Support & Relevant Information</b>\n\n{P_WARN} For Support Contact Admin.",
+                buttons=[
+                    [Button.url("Support", get_support_url(), style="primary", icon_custom_emoji_id=6266794310671275367)],
+                    [Button.url("Terms & Conditions", TERMS_URL, style="primary", icon_custom_emoji_id=6264777724741556322)],
+                    [Button.url("Channel", get_support_channel_url(), style="success", icon_custom_emoji_id=6267129592998270736)]
+                ]
+            )
+        elif text == "Admin Panel": 
+            if is_admin(uid): await admin_panel_handler(e)
+
+    except Exception as ex: logger.error(f"Message Error: {ex}", exc_info=True)
+
+@bot.on(events.CallbackQuery)
+async def handle_callback_query(e):
+    try:
+        uid = e.sender_id
+        if not is_bot_online() and not is_admin(uid):
+            return await e.answer("Bot is under maintenance.", alert=True)
+            
+        ensure_user(uid)
+        now = time.time()
+        if uid in user_spam_cooldown and now - user_spam_cooldown[uid] < 0.5:
+            return await e.answer("Please slow down! Don't spam buttons.", alert=True)
+        user_spam_cooldown[uid] = now
+
+        if is_user_banned(uid): return await e.answer("BANNED", alert=True)
+        data = e.data.decode()
+
+        if data == "verify_join":
+            if not await check_channel_joined(uid): return await e.answer("You must join the channels first!", alert=True)
+            row = cur.execute("SELECT terms_accepted FROM users WHERE user_id=?", (uid,)).fetchone()
+            terms = row[0] if row else 0
+            if not terms:
+                msg = f"{P_DOC} <b>TERMS & CONDITIONS</b>\nPlease read and accept our Terms & Conditions before using the bot."
+                btns = [
+                    [Button.url("Read Terms & Conditions", TERMS_URL, style="primary", icon_custom_emoji_id=6264777724741556322)],
+                    [Button.inline("Accept", "tc_accept", style="success", icon_custom_emoji_id=6267008582294705964), Button.inline("Reject", "tc_reject", style="danger", icon_custom_emoji_id=5785177332595561481)]
+                ]
+                try: await e.edit(msg, buttons=btns)
+                except MessageNotModifiedError: pass
+                return
+            await send_main_menu(e, uid)
+
+        elif data == "tc_accept":
+            cur.execute("UPDATE users SET terms_accepted=1 WHERE user_id=?", (uid,))
+            db.commit()
+            await e.answer("Terms Accepted!", alert=True)
+            await send_main_menu(e, uid)
+            
+        elif data == "tc_reject":
+            try: await e.edit(f"{P_NO} You cannot use the bot without accepting the terms.")
+            except MessageNotModifiedError: pass
+            
+        elif data == "cancel_action":
+            deposit_input.pop(uid, None); waiting_proof.pop(uid, None); session_buy_state.pop(uid, None)
+            try: await e.edit(f"{P_NO} <b>Cancelled.</b>")
+            except MessageNotModifiedError: pass
+
+        elif data.startswith("pg_c|"): 
+            p = data.split("|")
+            await show_countries(e, p[1], int(p[2]))
+
+        elif data.startswith("bc|"):
+            p = data.split("|")
+            await show_years(e, p[1], p[2])
+
+        elif data.startswith("by|"):
+            p = data.split("|")
+            if p[1] == 'single': await confirm_purchase(e, p[2], p[3], p[4])
+            else: await init_session_purchase(e, p[2], p[3], p[4])
+            
+        elif data.startswith("buy_cf|"):
+            p = data.split("|")
+            await process_purchase(e, p[1], p[2], p[3])
+
+        elif data.startswith("get_otp_again|"):
+            phone = data.split("|")[1]
+            if phone not in active_orders:
+                return await e.answer("Session already logged out or expired.", alert=True)
+            
+            order = active_orders[phone]
+            client = order['client']
+            start_time = order['start_time']
+            
+            await e.answer("Fetching latest OTP...", alert=False)
+            try:
+                msgs = await client.get_messages(777000, limit=5)
+                latest_code = None
+                for m in msgs:
+                    if m.date.timestamp() > start_time - 10:
+                        if m.message and re.search(OTP_REGEX, m.message) and "Login detected" not in m.message:
+                            latest_code = re.search(OTP_REGEX, m.message).group()
+                            break
+                
+                if latest_code:
+                    twofa_text = f"{P_2FA} <b>2FA:</b> <code>{html.escape(order['twofa'])}</code>" if order['twofa'] != "None" else f"{P_2FA} <b>2FA:</b> <code>Disabled (No Password)</code>"
+                    msg = (f"{P_YES} <b>Latest OTP Fetched!</b>\n\n"
+                           f"{P_PHONE} <b>Phone:</b> <code>{phone}</code>\n"
+                           f"{P_FLAG} <b>Country:</b> {html.escape(order['country'])}\n"
+                           f"{P_OTP} <b>OTP:</b> <code>{latest_code}</code>\n"
+                           f"{twofa_text}")
+                    btns = [
+                        [Button.inline("Get OTP Again", f"get_otp_again|{phone}", style="primary", icon_custom_emoji_id=6035353718684129368)],
+                        [Button.inline("Finish & Logout", f"logout_bot|{phone}", style="danger", icon_custom_emoji_id=6267262260243076354)]
+                    ]
+                    try: await e.edit(msg, buttons=btns)
+                    except MessageNotModifiedError: pass
+                else:
+                    await e.answer("No new OTP found yet. Try again in a few seconds.", alert=True)
+            except Exception:
+                await e.answer("Error fetching OTP.", alert=True)
+
+        elif data.startswith("logout_bot|"):
+            phone = data.split("|")[1]
+            if phone in active_orders:
+                order = active_orders.pop(phone)
+                try: await order['client'].log_out()
                 except: pass
+                try: await order['client'].disconnect()
+                except: pass
+                delete_session_files(order['sess'])
+                await e.edit(f"{P_YES} <b>Session Finished & Logged out successfully.</b>")
+            else:
+                await e.answer("No active order found or already logged out.", alert=True)
+        
+        elif data.startswith("page_purchases_"): await send_purchase_page(e, uid, int(data.split("_")[2]))
+        elif data == "back_to_stats": await stats_handler(e, is_callback=True)
+        elif data == "view_referrals": await view_referrals(e)
             
-        elif state == "WAITING_LINK":
-            msg = await api_send(user_id, f"{E_SYNC} <b>Checking Channel...</b>")
-            user_data = await get_user(user_id); config = await settings_col.find_one({"_id": "config"})
-            asyncio.create_task(check_and_show_stats(client, user_id, user_data, config, message.text.strip(), msg, save_new=True))
+        elif data.startswith("depm_"): await manual_deposit_init(e, data.replace("depm_", ""))
+        
+        elif data.startswith("adm_") and is_admin(uid): await admin_actions(e)
+        
+        elif data.startswith("dkp|") and has_perm(uid, 'p_bal'):
+            _, dep_id, action = data.split("|")
+            dep_id = int(dep_id)
+            row = cur.execute("SELECT user_id, method_name, status, amount FROM deposits WHERE id=?", (dep_id,)).fetchone()
+            if not row or row[2] != 'pending': return await e.edit(f"{P_WARN} Already processed.")
+            t_uid, method, orig_amt = row[0], row[1], row[3]
             
-        elif state == "WAITING_DM_LINK":
-            msg = await api_send(user_id, f"{E_SYNC} <b>Checking Channel...</b>")
-            user_data = await get_user(user_id); config = await settings_col.find_one({"_id": "config"})
-            asyncio.create_task(check_and_show_stats(client, user_id, user_data, config, message.text.strip(), msg, save_new=False))
-
-        elif state == "WAITING_LIMIT":
-            if not message.text or not message.text.isdigit(): 
-                USER_STATES.pop(user_id, None)
-                return await api_send(user_id, f"{E_WRN} Please enter a valid number. Campaign setup cancelled.")
+            curr = custom_dep_amt.get(dep_id, "0")
+            
+            if action.isdigit():
+                if curr == "0": curr = action
+                else: curr += action
+                if len(curr) > 7: curr = curr[:7]
+            elif action == "del": curr = curr[:-1] or "0"
+            elif action == "cancel":
+                btns = [
+                    [Button.inline(f"Accept (₹{orig_amt})", f"dep_acc|{dep_id}|{t_uid}|{method}|exact|{orig_amt}", style="success", icon_custom_emoji_id=6267008582294705964), Button.inline("Reject", f"dep_rej|{dep_id}|{t_uid}", style="danger", icon_custom_emoji_id=5785177332595561481)],
+                    [Button.inline("Custom Amount", f"dep_acc|{dep_id}|{t_uid}|{method}|custom|0", style="primary", icon_custom_emoji_id=6282846669335702032)]
+                ]
+                return await e.edit(f"{P_BELL} <b>NEW DEPOSIT REQUEST</b>\n\n{P_ACC} User ID: <code>{t_uid}</code>\n{P_MONEY} Request: <b>{P_INR}{orig_amt}</b>\n{P_CARD} Method: {html.escape(method)}\n{P_ID} Ref: <code>{dep_id}</code>", buttons=btns)
+            elif action == "conf":
+                amt = int(curr)
+                if amt <= 0: return await e.answer("Amount must be > 0", alert=True)
                 
-            USER_STATES[user_id]["limit"] = int(message.text); USER_STATES[user_id]["state"] = None
-            btn = {"inline_keyboard": [[ibtn("All Users", "flt_all", style="primary", icon=BTN_EMOJIS["user"])], [ibtn("Online / Recently Seen", "flt_recent", style="success", icon=BTN_EMOJIS["tick"])], [ibtn("Active Members", "flt_active", style="primary", icon=BTN_EMOJIS["user"])], [ibtn("Premium Users Only", "flt_premium", style="danger", icon=BTN_EMOJIS["diamond"])]]}
-            await api_send(user_id, f"{E_ADM} <b>Smart Filtering:</b>\nWho do you want to target?", kb=btn)
+                async with get_user_lock(t_uid):
+                    prev_row = cur.execute("SELECT balance FROM users WHERE user_id=?", (t_uid,)).fetchone()
+                    prev_bal = prev_row[0] if prev_row else 0
+                    update_balance(t_uid, amt)
+                    cur.execute("UPDATE deposits SET status='approved', amount=? WHERE id=?", (amt, dep_id))
+                    cur.execute("UPDATE users SET total_deposited = total_deposited + ? WHERE user_id=?", (amt, t_uid))
+                    db.commit()
+                    
+                await process_referral_bonus(t_uid, amt)
+                await e.edit(f"{P_YES} <b>APPROVED {P_INR}{amt} TO {t_uid} (Custom Amount)</b>")
+                await bot.send_message(int(t_uid), f"{P_YES} <b>Deposit Approved!</b>\n\n{P_MONEY} Amount Added: {P_INR}{amt}\nOld: {P_INR}{prev_bal} | New: {P_INR}{prev_bal+amt}")
+                return
+
+            custom_dep_amt[dep_id] = curr
+            await e.edit(f"{P_KEY} <b>Enter Custom Amount for User {t_uid}:</b>\n\n{P_MONEY} {curr}", buttons=get_admin_custom_keypad(dep_id))
+
+        elif data.startswith("dep_acc|") and has_perm(uid, 'p_bal'):
+            p = data.split("|")
+            dep_id, t_uid, method, a_type = p[1], int(p[2]), p[3], p[4]
+            row = cur.execute("SELECT status FROM deposits WHERE id=?", (dep_id,)).fetchone()
+            if not row or row[0] != 'pending': return await e.edit(f"{P_WARN} Already processed.")
             
-    except Exception as e:
-        USER_STATES.pop(user_id, None)
-        await api_send(message.chat.id, f"{E_WRN} <b>Error:</b>\n<code>{html.escape(str(e))}</code>")
+            if a_type == "exact":
+                amt = int(p[5]) 
+                async with get_user_lock(t_uid):
+                    prev_row = cur.execute("SELECT balance FROM users WHERE user_id=?", (t_uid,)).fetchone()
+                    prev_bal = prev_row[0] if prev_row else 0
+                    update_balance(t_uid, amt)
+                    
+                    cur.execute("UPDATE deposits SET status='approved', amount=? WHERE id=?", (amt, dep_id))
+                    cur.execute("UPDATE users SET total_deposited = total_deposited + ? WHERE user_id=?", (amt, t_uid))
+                    db.commit()
+                
+                await process_referral_bonus(t_uid, amt)
+                
+                user_msg = (f"{P_YES} <b>Deposit Approved!</b>\n\n{P_MONEY} <b>Amount Added:</b> ${to_usd(amt):.2f} ({P_INR}{amt})\n"
+                            f"Previous Balance: ${to_usd(prev_bal):.2f} ({P_INR}{prev_bal})\nNew Balance: ${to_usd(prev_bal+amt):.2f} ({P_INR}{prev_bal+amt})")
+                await bot.send_message(int(t_uid), user_msg)
+                try: await e.edit(f"{P_YES} <b>MANUALLY CREDITED {P_INR}{amt} TO {t_uid}</b>")
+                except MessageNotModifiedError: pass
+                
+            elif a_type == "custom":
+                custom_dep_amt[int(dep_id)] = "0"
+                await e.edit(f"{P_KEY} <b>Enter Custom Amount for User {t_uid}:</b>\n\n{P_MONEY} 0", buttons=get_admin_custom_keypad(int(dep_id)))
+                
+        elif data.startswith("dep_rej|") and has_perm(uid, 'p_bal'):
+            p = data.split("|")
+            dep_id, t_uid = p[1], int(p[2])
+            row = cur.execute("SELECT status FROM deposits WHERE id=?", (dep_id,)).fetchone()
+            if not row or row[0] != 'pending': return await e.edit(f"{P_WARN} Already processed.")
+            admin_dep_state[uid] = {'target_uid': t_uid, 'dep_id': dep_id, 'step': 'wait_reason', 'msg_id': e.message.id}
+            await bot.send_message(uid, f"{P_WARN} Reply to this message with the REASON for rejecting user <code>{t_uid}</code>:")
+            try: await e.answer("Check your bot PMs to enter the reason.", alert=True)
+            except: pass
 
-# ================= DYNAMIC HANDLER BINDER =================
-bot.add_handler(MessageHandler(start_cmd, filters.command("start") & filters.private))
-bot.add_handler(MessageHandler(shortcut_cmds, filters.command(["buypremium", "massdm", "myaccount"]) & filters.private))
-bot.add_handler(MessageHandler(check_total_public, filters.command(["total", "totaldms"]) & filters.private))
-bot.add_handler(MessageHandler(admin_panel, filters.command("admin")))
-bot.add_handler(MessageHandler(master_admin_cmds, filters.command(["setwebsitelink", "toggleauto", "reqall", "setfampay", "setmanual", "setcrypto", "setfampayqr", "setmanualqr", "setcryptoqr", "setprice1d", "setprice3d", "setprice7d", "setprice1m", "setfsub1", "setfsub2", "setfsub3", "setfsub4", "setfsub5", "setlogchannel", "setsuccesslog", "setleaderboard", "setfreechannel", "setfreerequest", "setfreetrial", "setfreereq", "setldbtime", "setrefbonus", "setdelay", "ongoing", "sales", "giveprem", "removeprem", "maintenance"])))
-bot.add_handler(MessageHandler(shared_admin_cmds, filters.command(["stats", "checkuser", "clearsession", "banuser", "unbanuser", "broadcast"])))
-bot.add_handler(MessageHandler(dm_controls, filters.command(["chk", "pause", "resume", "stop"]) & filters.private))
-bot.add_handler(MessageHandler(handle_states, filters.private & filters.incoming), group=1)
-bot.add_handler(CallbackQueryHandler(cb_handler))
-bot.add_handler(CallbackQueryHandler(admin_manual_approve, filters.regex(r"^manapp_") | filters.regex(r"^manrej_")), group=1)
-bot.add_handler(ChatJoinRequestHandler(handle_join_requests))
+    except Exception as ex: logger.error(f"Callback Error: {ex}", exc_info=True)
 
-# ================= SYSTEM LAUNCHER =================
-async def start_bot():
-    print("-----------------------------------")
-    await init_db()
-    print("-----------------------------------")
-    await bot.start()
-    print(f"🚀 BOT STARTED: {(await bot.get_me()).username}")
-    asyncio.create_task(auto_leaderboard_task())
-    await idle()
-    print("Shutting down...")
-    await bot.stop()
+async def main():
+    print("BOT STARTED SUCCESSFULLY")
+    await bot.run_until_disconnected()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
+    bot.start(bot_token=BOT_TOKEN)
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(start_bot())
+    loop.run_until_complete(main())
