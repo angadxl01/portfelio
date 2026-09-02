@@ -1,6 +1,6 @@
 pyrogram
 tgcrypto
 flask
-telethon
-aiohttp
-motor
+
+
+
